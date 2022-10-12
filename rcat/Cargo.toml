@@ -1,0 +1,8 @@
+[package]
+name = "rcat"
+version = "0.1.0"
+edition = "2021"
+authors = ["Dionysus <dionysus-oss@proton.me>"]
+
+[dependencies]
+clap = { version = "4.0.14", features = ["derive"] }
