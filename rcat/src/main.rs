@@ -1,5 +1,9 @@
 use std::ops::RangeInclusive;
+use std::process;
 use clap::{Parser, Subcommand};
+
+mod connect;
+mod serve;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -52,9 +56,31 @@ fn main() {
     match &cli.command {
         Commands::Connect { host, port } => {
             println!("connect to {}:{}", host, port);
+
+            let run_result = connect::run(host, port);
+            match run_result {
+                Ok(()) => {
+                    process::exit(0);
+                }
+                Err(e) => {
+                    println!("failed - {}", e);
+                    process::exit(1);
+                }
+            }
         },
         Commands::Serve { bind_host, port } => {
             println!("bind to {}:{}", bind_host, port);
+
+            let run_result = serve::run(bind_host, port);
+            match run_result {
+                Ok(exit_code) => {
+                    process::exit(exit_code);
+                }
+                Err(e) => {
+                    println!("failed - {}", e);
+                    process::exit(1);
+                }
+            }
         }
     }
 }
