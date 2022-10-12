@@ -73,8 +73,8 @@ fn main() {
 
             let run_result = serve::run(bind_host, port);
             match run_result {
-                Ok(exit_code) => {
-                    process::exit(exit_code);
+                Ok(()) => {
+                    process::exit(0);
                 }
                 Err(e) => {
                     println!("failed - {}", e);
