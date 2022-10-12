@@ -1,14 +1,14 @@
 use std::io::{Read, stdout, Write};
 use std::net::TcpListener;
 
-pub fn run(bind_host: &String, port: &u16) -> Result<i32, String> {
+pub fn run(bind_host: &String, port: &u16) -> Result<(), String> {
     let addr = format!("{}:{}", bind_host, port);
     let listener = TcpListener::bind(addr.clone()).map_err(|_| format!("Failed to bind to {}", addr))?;
 
     for stream in listener.incoming() {
         match stream {
             Ok(mut s) => {
-                println!("Connection established!");
+                println!("Connection accepted");
 
                 let mut buf = [0; 128];
                 let mut read_bytes = 0;
@@ -25,5 +25,5 @@ pub fn run(bind_host: &String, port: &u16) -> Result<i32, String> {
         }
     }
 
-    Ok(0)
+    Ok(())
 }
