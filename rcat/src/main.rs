@@ -1,9 +1,15 @@
+use std::io::Write;
 use std::ops::RangeInclusive;
 use std::process;
+use std::time::Duration;
 use clap::{Parser, Subcommand};
+use tokio::io::AsyncReadExt;
+use tokio::net::TcpListener;
+use tokio::runtime::Handle;
 
 mod connect;
 mod serve;
+mod stream;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -30,7 +36,7 @@ enum Commands {
 
         #[arg(short, long, value_parser = port_in_range)]
         port: u16,
-    }
+    },
 }
 
 const PORT_RANGE: RangeInclusive<usize> = 1..=65535;
@@ -52,35 +58,30 @@ fn port_in_range(s: &str) -> Result<u16, String> {
 
 fn main() {
     let cli = Cli::parse();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
     match &cli.command {
         Commands::Connect { host, port } => {
             println!("connect to {}:{}", host, port);
 
-            let run_result = connect::run(host, port);
-            match run_result {
-                Ok(()) => {
-                    process::exit(0);
-                }
-                Err(e) => {
-                    println!("failed - {}", e);
-                    process::exit(1);
-                }
-            }
-        },
+            runtime.block_on(async {
+                tokio::select!(
+                    _ = stream::client(&runtime) => {}
+                    _ = tokio::signal::ctrl_c() => {}
+                );
+            });
+        }
         Commands::Serve { bind_host, port } => {
             println!("bind to {}:{}", bind_host, port);
 
-            let run_result = serve::run(bind_host, port);
-            match run_result {
-                Ok(()) => {
-                    process::exit(0);
-                }
-                Err(e) => {
-                    println!("failed - {}", e);
-                    process::exit(1);
-                }
-            }
+            runtime.block_on( async {
+                tokio::select!(
+                    val = stream::server(&runtime) => {}
+                    _ = tokio::signal::ctrl_c() => {}
+                );
+            });
         }
     }
+
+    runtime.shutdown_timeout(Duration::from_secs(0));
 }

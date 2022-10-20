@@ -6,3 +6,4 @@ authors = ["Dionysus <dionysus-oss@proton.me>"]
 
 [dependencies]
 clap = { version = "4.0.14", features = ["derive"] }
+tokio = { version = "1.21.2", features = ["full"]  }
