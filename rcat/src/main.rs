@@ -58,6 +58,7 @@ fn port_in_range(s: &str) -> Result<u16, String> {
 
 fn main() {
     let cli = Cli::parse();
+
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
     match &cli.command {
@@ -65,23 +66,24 @@ fn main() {
             println!("connect to {}:{}", host, port);
 
             runtime.block_on(async {
-                tokio::select!(
-                    _ = stream::client(&runtime) => {}
+                tokio::select! {
+                    _ = stream::client() => {}
                     _ = tokio::signal::ctrl_c() => {}
-                );
+                }
             });
         }
         Commands::Serve { bind_host, port } => {
             println!("bind to {}:{}", bind_host, port);
 
-            runtime.block_on( async {
-                tokio::select!(
-                    val = stream::server(&runtime) => {}
+            runtime.block_on(async {
+                tokio::select! {
+                    _ = stream::server() => {}
                     _ = tokio::signal::ctrl_c() => {}
-                );
+                }
             });
         }
     }
 
+    // https://github.com/tokio-rs/tokio/issues/2318
     runtime.shutdown_timeout(Duration::from_secs(0));
 }
