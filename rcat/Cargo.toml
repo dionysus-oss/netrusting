@@ -6,4 +6,7 @@ authors = ["Dionysus <dionysus-oss@proton.me>"]
 
 [dependencies]
 clap = { version = "4.0.14", features = ["derive"] }
+rustls-pemfile = "1.0.1"
 tokio = { version = "1.21.2", features = ["full"]  }
+tokio-rustls = "0.23.4"
+webpki-roots = "0.22.5"

@@ -1,15 +1,13 @@
-use std::io::Write;
 use std::ops::RangeInclusive;
-use std::process;
+use std::path::Path;
 use std::time::Duration;
 use clap::{Parser, Subcommand};
-use tokio::io::AsyncReadExt;
-use tokio::net::TcpListener;
-use tokio::runtime::Handle;
 
 mod connect;
 mod serve;
 mod stream;
+mod tls;
+mod common;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -20,13 +18,16 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-enum Commands {
+pub enum Commands {
     /// Connect to a server
     Connect {
         host: String,
 
         #[arg(short, long, value_parser = port_in_range)]
         port: u16,
+
+        #[arg(long, value_parser = valid_path)]
+        ca: Option<String>
     },
 
     /// Start a server
@@ -36,6 +37,15 @@ enum Commands {
 
         #[arg(short, long, value_parser = port_in_range)]
         port: u16,
+
+        #[arg(long, value_parser = valid_path)]
+        ca: Option<String>,
+
+        #[arg(long, value_parser = valid_path)]
+        cert: Option<String>,
+
+        #[arg(long, value_parser = valid_path)]
+        key: Option<String>,
     },
 }
 
@@ -56,28 +66,56 @@ fn port_in_range(s: &str) -> Result<u16, String> {
     }
 }
 
+fn valid_path(s: &str) -> Result<String, String> {
+    let path = Path::new(s);
+
+    if path.exists() {
+        Ok(s.to_string())
+    } else {
+        Err(format!(
+            "Path does not exist {}",
+            s,
+        ))
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
+
+    //let addr = SocketAddr::from_str("127.0.0.1:8080").unwrap();
+    //addr.is_ipv4();
+    //let addr = .to_socket_addrs().unwrap();
+    //addr.
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
     match &cli.command {
-        Commands::Connect { host, port } => {
+        Commands::Connect { host, port, ca } => {
             println!("connect to {}:{}", host, port);
 
             runtime.block_on(async {
                 tokio::select! {
-                    _ = stream::client() => {}
+                    res = tls::tls_connect(host, port, ca) => {
+                        if let Err(e) = res {
+                            println!("connect failed: {}", e.to_string());
+                        }
+                    }
+                    // _ = stream::client(host, port) => {}
                     _ = tokio::signal::ctrl_c() => {}
                 }
             });
         }
-        Commands::Serve { bind_host, port } => {
+        Commands::Serve { bind_host, port, ca, cert, key } => {
             println!("bind to {}:{}", bind_host, port);
 
             runtime.block_on(async {
                 tokio::select! {
-                    _ = stream::server() => {}
+                    res = tls::tls_listen(bind_host, port, ca, cert.clone().expect("cert is required"), key.clone().expect("cert is required")) => {
+                        if let Err(e) = res {
+                            println!("listen failed: {}", e.to_string());
+                        }
+                    }
+                    //_ = stream::server(bind_host, port) => {}
                     _ = tokio::signal::ctrl_c() => {}
                 }
             });
@@ -85,5 +123,5 @@ fn main() {
     }
 
     // https://github.com/tokio-rs/tokio/issues/2318
-    runtime.shutdown_timeout(Duration::from_secs(0));
+    runtime.shutdown_timeout(Duration::from_secs(5));
 }
