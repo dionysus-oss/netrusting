@@ -36,12 +36,12 @@ pub async fn tls_connect(host: &String, port: &u16, ca: &Option<String>) -> Resu
         .with_root_certificates(root_cert_store)
         .with_no_client_auth();
 
-    let config = TlsConnector::from(Arc::new(config));
+    let tls_connector = TlsConnector::from(Arc::new(config));
 
     let server_name = host.as_str().try_into().unwrap();
 
     let stream = TcpStream::connect(&addr).await?;
-    let stream = config.connect(server_name, stream).await?;
+    let stream = tls_connector.connect(server_name, stream).await?;
 
     let (reader, writer) = split(stream);
 
@@ -59,7 +59,9 @@ fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
 }
 
 fn load_keys(path: &Path) -> io::Result<Vec<PrivateKey>> {
-    rustls_pemfile::rsa_private_keys(&mut BufReader::new(File::open(path)?))
+    let f = File::open(path)?;
+
+    rustls_pemfile::rsa_private_keys(&mut BufReader::new(f))
         .map_err(|_| Error::new(io::ErrorKind::InvalidInput, "invalid key"))
         .map(|mut keys| keys.drain(..).map(PrivateKey).collect())
 }

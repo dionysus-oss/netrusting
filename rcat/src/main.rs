@@ -84,8 +84,6 @@ fn main() {
 
     //let addr = SocketAddr::from_str("127.0.0.1:8080").unwrap();
     //addr.is_ipv4();
-    //let addr = .to_socket_addrs().unwrap();
-    //addr.
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
