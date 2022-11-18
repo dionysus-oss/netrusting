@@ -1,3 +1,4 @@
+use std::io::{stdout, Write};
 use std::ops::RangeInclusive;
 use std::path::Path;
 use std::time::Duration;
@@ -8,6 +9,7 @@ mod serve;
 mod stream;
 mod tls;
 mod common;
+mod udp;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -25,6 +27,9 @@ pub enum Commands {
 
         #[arg(short, long, value_parser = port_in_range)]
         port: u16,
+
+        #[arg(long, value_parser = port_in_range)]
+        listen_port: Option<u16>,
 
         #[arg(long, value_parser = valid_path)]
         ca: Option<String>
@@ -88,16 +93,21 @@ fn main() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
     match &cli.command {
-        Commands::Connect { host, port, ca } => {
+        Commands::Connect { host, port, listen_port, ca } => {
             println!("connect to {}:{}", host, port);
 
             runtime.block_on(async {
                 tokio::select! {
-                    res = tls::tls_connect(host, port, ca) => {
+                    res = udp::udp_connect(host, port, listen_port.clone().expect("missing listen port")) => {
                         if let Err(e) = res {
                             println!("connect failed: {}", e.to_string());
                         }
                     }
+                    // res = tls::tls_connect(host, port, ca) => {
+                    //     if let Err(e) = res {
+                    //         println!("connect failed: {}", e.to_string());
+                    //     }
+                    // }
                     // _ = stream::client(host, port) => {}
                     _ = tokio::signal::ctrl_c() => {}
                 }
@@ -108,11 +118,16 @@ fn main() {
 
             runtime.block_on(async {
                 tokio::select! {
-                    res = tls::tls_listen(bind_host, port, ca, cert.clone().expect("cert is required"), key.clone().expect("cert is required")) => {
+                    res = udp::udp_serve(bind_host, port) => {
                         if let Err(e) = res {
-                            println!("listen failed: {}", e.to_string());
+                            println!("serve failed: {}", e.to_string());
                         }
                     }
+                    // res = tls::tls_listen(bind_host, port, ca, cert.clone().expect("cert is required"), key.clone().expect("cert is required")) => {
+                    //     if let Err(e) = res {
+                    //         println!("listen failed: {}", e.to_string());
+                    //     }
+                    // }
                     //_ = stream::server(bind_host, port) => {}
                     _ = tokio::signal::ctrl_c() => {}
                 }
@@ -120,6 +135,8 @@ fn main() {
         }
     }
 
+    stdout().flush().expect("failed to flush stdout");
+
     // https://github.com/tokio-rs/tokio/issues/2318
-    runtime.shutdown_timeout(Duration::from_secs(5));
+    runtime.shutdown_timeout(Duration::from_secs(0));
 }
