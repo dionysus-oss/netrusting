@@ -51,6 +51,9 @@ pub enum Commands {
 
         #[arg(long, value_parser = valid_path)]
         key: Option<String>,
+
+        #[arg(short, long)]
+        exec: Option<String>,
     },
 }
 
@@ -98,37 +101,40 @@ fn main() {
 
             runtime.block_on(async {
                 tokio::select! {
-                    res = udp::udp_connect(host, port, listen_port.clone().expect("missing listen port")) => {
-                        if let Err(e) = res {
-                            println!("connect failed: {}", e.to_string());
-                        }
-                    }
+                    // res = udp::udp_connect(host, port, listen_port.clone().expect("missing listen port")) => {
+                    //     if let Err(e) = res {
+                    //         println!("connect failed: {}", e.to_string());
+                    //     }
+                    // }
+
                     // res = tls::tls_connect(host, port, ca) => {
                     //     if let Err(e) = res {
                     //         println!("connect failed: {}", e.to_string());
                     //     }
                     // }
-                    // _ = stream::client(host, port) => {}
+
+                    _ = stream::client(host, port) => {}
                     _ = tokio::signal::ctrl_c() => {}
                 }
             });
         }
-        Commands::Serve { bind_host, port, ca, cert, key } => {
+        Commands::Serve { bind_host, port, ca, cert, key, exec } => {
             println!("bind to {}:{}", bind_host, port);
 
             runtime.block_on(async {
                 tokio::select! {
-                    res = udp::udp_serve(bind_host, port) => {
-                        if let Err(e) = res {
-                            println!("serve failed: {}", e.to_string());
-                        }
-                    }
+                    // res = udp::udp_serve(bind_host, port) => {
+                    //     if let Err(e) = res {
+                    //         println!("serve failed: {}", e.to_string());
+                    //     }
+                    // }
+
                     // res = tls::tls_listen(bind_host, port, ca, cert.clone().expect("cert is required"), key.clone().expect("cert is required")) => {
                     //     if let Err(e) = res {
                     //         println!("listen failed: {}", e.to_string());
                     //     }
                     // }
-                    //_ = stream::server(bind_host, port) => {}
+                    _ = stream::serve_exec(bind_host, port, exec.clone().expect("exec is required")) => {}
                     _ = tokio::signal::ctrl_c() => {}
                 }
             });
