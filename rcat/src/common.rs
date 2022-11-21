@@ -1,6 +1,7 @@
 use std::io::{Read, Stdout, Write};
 use std::process::Stdio;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
 use tokio::select;
 
 pub async fn read_write<R, W>(mut reader: R, mut writer: W) where
@@ -23,7 +24,7 @@ pub async fn read_write<R, W>(mut reader: R, mut writer: W) where
 pub async fn read_write_exec<R, W>(mut reader: R, mut writer: W, exec: String) where
     R: AsyncRead + Unpin + Sized + Send + 'static,
     W: AsyncWrite + Unpin + Sized + Send + 'static {
-    let mut child = tokio::process::Command::new(exec)
+    let mut child = Command::new(exec)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -33,11 +34,11 @@ pub async fn read_write_exec<R, W>(mut reader: R, mut writer: W, exec: String) w
     let mut stdout = child.stdout.unwrap();
     let mut stderr = child.stderr.unwrap();
 
-    let mut active = true;
-
     let mut stdout_buf = [0; 512];
     let mut stderr_buf = [0; 512];
     let mut network_in_buf = [0; 512];
+
+    let mut active = true;
 
     while active {
         select! {
@@ -65,10 +66,9 @@ pub async fn read_write_exec<R, W>(mut reader: R, mut writer: W, exec: String) w
             }
             res = reader.read(&mut network_in_buf) => {
                 if let Ok(amount) = res {
+                    // Note there is no associated else because a zero length UDP message is valid. Just skip writing
                     if amount != 0 {
                         stdin.write(&network_in_buf[0..amount]).await.map_err(|_| "failed to write to stdout").unwrap();
-                    } else {
-                        active = false;
                     }
                 } else {
                     res.unwrap();
