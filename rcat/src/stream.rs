@@ -1,21 +1,22 @@
+use std::io::Error;
 use crate::common::{read_write, read_write_exec};
 
-pub async fn client(host: &String, port: &u16) -> Result<(), String> {
+pub async fn connect(host: &String, port: &u16) -> Result<(), Error> {
     let addr = format!("{}:{}", host, port);
-    let client = tokio::net::TcpStream::connect(addr.as_str()).await.map_err(|_| "failed to connect")?;
+    let client = tokio::net::TcpStream::connect(addr.as_str()).await?;
 
-    let (mut reader, mut writer) = client.into_split();
+    let (reader, writer) = client.into_split();
 
     read_write(reader, writer).await;
 
     Ok(())
 }
 
-pub async fn server(bind_host: &String, port: &u16) -> Result<(), String> {
+pub async fn serve(bind_host: &String, port: &u16) -> Result<(), Error> {
     let addr = format!("{}:{}", bind_host, port);
-    let listener = tokio::net::TcpListener::bind(addr.as_str()).await.map_err(|_| "failed to bind")?;
+    let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
 
-    let (handle, _) = listener.accept().await.map_err(|_| "failed to accept")?;
+    let (handle, _) = listener.accept().await?;
 
     let (reader, writer) = handle.into_split();
 
@@ -24,11 +25,11 @@ pub async fn server(bind_host: &String, port: &u16) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn serve_exec(bind_host: &String, port: &u16, exec: String) -> Result<(), String> {
+pub async fn serve_exec(bind_host: &String, port: &u16, exec: String) -> Result<(), Error> {
     let addr = format!("{}:{}", bind_host, port);
-    let listener = tokio::net::TcpListener::bind(addr.as_str()).await.map_err(|_| "failed to bind")?;
+    let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
 
-    let (handle, _) = listener.accept().await.map_err(|_| "failed to accept")?;
+    let (handle, _) = listener.accept().await?;
 
     let (reader, writer) = handle.into_split();
 

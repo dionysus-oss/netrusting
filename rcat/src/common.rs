@@ -1,4 +1,3 @@
-use std::io::{Read, Stdout, Write};
 use std::process::Stdio;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
@@ -22,13 +21,13 @@ pub async fn read_write<R, W>(mut reader: R, mut writer: W) where
 }
 
 pub async fn read_write_exec<R, W>(mut reader: R, mut writer: W, exec: String) where
-    R: AsyncRead + Unpin + Sized + Send + 'static,
-    W: AsyncWrite + Unpin + Sized + Send + 'static {
-    let mut child = Command::new(exec)
+    R: AsyncRead + Unpin + 'static,
+    W: AsyncWrite + Unpin + 'static {
+    let child = Command::new(exec)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn().unwrap();
+        .spawn().expect("error launching program");
 
     let mut stdin = child.stdin.unwrap();
     let mut stdout = child.stdout.unwrap();

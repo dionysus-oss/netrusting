@@ -2,13 +2,14 @@ use tokio::io::{stdin, stdout};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
 use tokio::select;
+use std::io::Error;
 
-pub async fn udp_connect(host: &String, port: &u16, listen_port: u16) -> Result<(), String> {
+pub async fn udp_connect(host: &String, port: &u16, listen_port: u16) -> Result<(), Error> {
     let addr = format!("0.0.0.0:{}", listen_port);
-    let socket = UdpSocket::bind(addr).await.map_err(|_| "failed to bind to return port")?;
+    let socket = UdpSocket::bind(addr).await?;
 
     let remote_addr = format!("{}:{}", host, port);
-    socket.connect(remote_addr).await.map_err(|_| "failed to connect")?;
+    socket.connect(remote_addr).await?;
 
     let mut stdin_buf = [0; 512];
     let mut network_in_buf = [0; 512];
@@ -46,9 +47,9 @@ pub async fn udp_connect(host: &String, port: &u16, listen_port: u16) -> Result<
     Ok(())
 }
 
-pub async fn udp_serve(bind_host: &String, port: &u16) -> Result<(), String> {
+pub async fn udp_serve(bind_host: &String, port: &u16) -> Result<(), Error> {
     let addr = format!("{}:{}", bind_host, port);
-    let socket = UdpSocket::bind(addr).await.map_err(|_| "failed to bind")?;
+    let socket = UdpSocket::bind(addr).await?;
 
     let mut stdin_buf = [0; 512];
     let mut network_in_buf = [0; 512];
