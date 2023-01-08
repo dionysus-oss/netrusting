@@ -1,2 +1,6 @@
 [workspace]
-members = ["rcat"]
+members = [
+    "rcat",
+    "rdns/core",
+    "rdns/config"
+]
