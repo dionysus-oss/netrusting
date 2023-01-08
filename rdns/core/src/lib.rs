@@ -1,9 +1,14 @@
+use crate::name::Name;
 use bytes::Bytes;
+
+pub mod error;
+mod name;
+mod record;
 
 // A resource record (RR)
 pub struct ResourceRecord {
     /// The owner name of this resource record
-    pub name: String,
+    pub name: Name,
     // The TYPE code
     pub rr_type: RRType<u16>,
     // The CLASS code
@@ -99,7 +104,7 @@ impl RRType<u16> {
             14 => RRType::MINFO,
             15 => RRType::MX,
             16 => RRType::TXT,
-            v => RRType::UNKNOWN(v)
+            v => RRType::UNKNOWN(v),
         }
     }
 }
@@ -137,7 +142,7 @@ impl RRClass<u16> {
             2 => RRClass::CS,
             3 => RRClass::CH,
             4 => RRClass::HS,
-            v => RRClass::UNKNOWN(v)
+            v => RRClass::UNKNOWN(v),
         }
     }
 }
