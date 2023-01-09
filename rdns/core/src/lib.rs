@@ -5,6 +5,9 @@ pub mod error;
 mod name;
 mod record;
 
+#[cfg(test)]
+mod test;
+
 // A resource record (RR)
 pub struct ResourceRecord {
     /// The owner name of this resource record
@@ -148,7 +151,7 @@ impl RRClass<u16> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use crate::{RRClass, RRType};
 
     #[test]

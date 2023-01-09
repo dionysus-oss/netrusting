@@ -3,6 +3,12 @@ use crate::error::RDNSError;
 #[derive(Debug, Clone)]
 pub struct Name(Vec<u8>);
 
+impl Name {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
 impl<'a> TryFrom<&'a str> for Name {
     type Error = RDNSError;
 
@@ -25,6 +31,12 @@ impl Into<String> for Name {
         }
 
         String::from_utf8(bytes[1..].to_owned()).unwrap()
+    }
+}
+
+impl Into<Vec<u8>> for Name {
+    fn into(self) -> Vec<u8> {
+        self.0
     }
 }
 
@@ -171,6 +183,7 @@ mod parser {
 mod tests {
     use crate::error::RDNSError;
     use crate::name::Name;
+    use crate::test;
 
     #[test]
     fn root_name() {
@@ -183,7 +196,7 @@ mod tests {
         let test_name = "example.com";
         let name = Name::try_from(test_name).unwrap();
 
-        let expected = dirty_to_bytes(test_name);
+        let expected = test::dirty_to_bytes(test_name);
         assert_eq!(expected, name.0);
     }
 
@@ -192,7 +205,7 @@ mod tests {
         let test_name = "example.com.";
         let name = Name::try_from(test_name).unwrap();
 
-        let expected = dirty_to_bytes(test_name);
+        let expected = test::dirty_to_bytes(test_name);
         assert_eq!(expected, name.0);
     }
 
@@ -201,7 +214,7 @@ mod tests {
         let test_name = "a.b.example.com";
         let name = Name::try_from(test_name).unwrap();
 
-        let expected = dirty_to_bytes(test_name);
+        let expected = test::dirty_to_bytes(test_name);
         assert_eq!(expected, name.0);
     }
 
@@ -210,7 +223,7 @@ mod tests {
         let test_name = "a-b.example.com";
         let name = Name::try_from(test_name).unwrap();
 
-        let expected = dirty_to_bytes(test_name);
+        let expected = test::dirty_to_bytes(test_name);
         assert_eq!(expected, name.0);
     }
 
@@ -294,20 +307,5 @@ mod tests {
         let name = Name::try_from(test_name).unwrap();
 
         assert_eq!(test_name, <Name as Into<String>>::into(name));
-    }
-
-    fn dirty_to_bytes(repr: &str) -> Vec<u8> {
-        let mut result = Vec::with_capacity(repr.len());
-
-        let labels = repr.split('.');
-
-        for label in labels {
-            result.push(label.len() as u8);
-            for ch in label.chars() {
-                result.push(ch as u8)
-            }
-        }
-
-        result
     }
 }

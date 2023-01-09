@@ -15,6 +15,9 @@ pub enum RDNSError {
     #[error("the name is invalid")]
     NameInvalid(),
 
+    #[error("the resource record is invalid")]
+    ResourceRecordInvalid(),
+
     #[error("i/o error")]
     IoError {
         #[from]
