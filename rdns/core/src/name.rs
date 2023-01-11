@@ -1,9 +1,17 @@
 use crate::error::RDNSError;
+use std::collections::HashSet;
+use std::iter::Peekable;
+use std::str::Chars;
 
 #[derive(Debug, Clone)]
 pub struct Name(Vec<u8>);
 
 impl Name {
+    pub fn parse(repr: &mut Peekable<Chars>, stop_chars: HashSet<char>) -> Result<Name, RDNSError> {
+        let result = parser::NameParser::parse(repr, stop_chars)?;
+        Ok(Name(result))
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -13,7 +21,7 @@ impl<'a> TryFrom<&'a str> for Name {
     type Error = RDNSError;
 
     fn try_from(repr: &str) -> Result<Self, Self::Error> {
-        parser::NameParser::parse(repr).map(|v| Name(v))
+        parser::NameParser::parse_repr(repr).map(|v| Name(v))
     }
 }
 
@@ -40,47 +48,59 @@ impl Into<Vec<u8>> for Name {
     }
 }
 
-mod parser {
+pub mod parser {
     use crate::error::RDNSError;
+    use std::collections::HashSet;
     use std::iter::Peekable;
     use std::str::Chars;
 
-    pub struct NameParser<'a> {
-        repr: Peekable<Chars<'a>>,
+    pub struct NameParser<'a, 'b> {
+        repr: &'a mut Peekable<Chars<'b>>,
         pos: u8,
         label_pos: u8,
         result: Vec<u8>,
     }
 
-    impl<'a> NameParser<'_> {
-        fn new(repr: &'a str) -> Result<NameParser<'a>, RDNSError> {
+    impl<'a, 'b> NameParser<'_, '_> {
+        fn new(repr: &'a mut Peekable<Chars<'b>>) -> Result<NameParser<'a, 'b>, RDNSError> {
+            Ok(NameParser {
+                repr,
+                pos: 0,
+                label_pos: 0,
+                result: Vec::new(),
+            })
+        }
+
+        pub fn parse_repr(repr: &'a str) -> Result<Vec<u8>, RDNSError> {
             if repr.len() > 255 {
                 return Err(RDNSError::NameTooLong(repr.len()));
             }
 
-            Ok(NameParser {
-                repr: repr.chars().peekable(),
-                pos: 0,
-                label_pos: 0,
-                result: Vec::with_capacity(repr.len()),
-            })
+            NameParser::parse(&mut repr.chars().peekable(), HashSet::new())
         }
 
-        pub fn parse(repr: &'a str) -> Result<Vec<u8>, RDNSError> {
+        pub fn parse(
+            repr: &'a mut Peekable<Chars>,
+            stop_chars: HashSet<char>,
+        ) -> Result<Vec<u8>, RDNSError> {
             let mut parser = NameParser::new(repr)?;
 
             match parser.repr.peek() {
                 Some('.') => {
                     parser.result.push(0);
                 }
-                Some(_) => parser.parse_subdomain()?,
+                Some(_) => parser.parse_subdomain(stop_chars)?,
                 None => return Err(RDNSError::NameInvalid()),
             };
+
+            if parser.result.len() > 255 {
+                return Err(RDNSError::NameTooLong(parser.result.len()));
+            }
 
             Ok(parser.result)
         }
 
-        fn parse_subdomain(&mut self) -> Result<(), RDNSError> {
+        fn parse_subdomain(&mut self, stop_chars: HashSet<char>) -> Result<(), RDNSError> {
             self.parse_label()?;
 
             match self.repr.peek() {
@@ -88,15 +108,22 @@ mod parser {
                     self.pos += 1;
                     self.repr.next();
 
-                    if self.repr.peek().is_none() {
+                    if self.repr.peek().is_none() || stop_chars.contains(self.repr.peek().unwrap())
+                    {
                         self.result.push(0);
                     } else {
-                        self.parse_subdomain()?;
+                        self.parse_subdomain(stop_chars)?;
                     }
 
                     Ok(())
                 }
-                Some(_) => Err(RDNSError::NameLabelInvalid(self.pos)),
+                Some(x) => {
+                    if stop_chars.contains(x) {
+                        Ok(())
+                    } else {
+                        Err(RDNSError::NameLabelInvalid(self.pos))
+                    }
+                }
                 None => Ok(()),
             }
         }
@@ -182,8 +209,9 @@ mod parser {
 #[cfg(test)]
 mod tests {
     use crate::error::RDNSError;
-    use crate::name::Name;
+    use crate::name::{parser, Name};
     use crate::test;
+    use std::collections::HashSet;
 
     #[test]
     fn root_name() {
@@ -307,5 +335,50 @@ mod tests {
         let name = Name::try_from(test_name).unwrap();
 
         assert_eq!(test_name, <Name as Into<String>>::into(name));
+    }
+
+    #[test]
+    fn parse_with_stop_pattern_for_example_dot_com_absolute() {
+        let test_name = "example.com. ";
+        let name = Name(
+            parser::NameParser::parse(&mut test_name.chars().peekable(), HashSet::from([' ']))
+                .unwrap(),
+        );
+
+        assert_eq!(
+            test_name.trim_end().to_string(),
+            <Name as Into<String>>::into(name)
+        );
+    }
+
+    #[test]
+    fn parse_with_stop_pattern_for_example_dot_com_relative() {
+        let test_name = "example.com ";
+        let name = Name(
+            parser::NameParser::parse(&mut test_name.chars().peekable(), HashSet::from([' ']))
+                .unwrap(),
+        );
+
+        assert_eq!(
+            test_name.trim_end().to_string(),
+            <Name as Into<String>>::into(name)
+        );
+    }
+
+    #[test]
+    fn parse_with_multi_stop_pattern() {
+        let test_name = "example.com\t";
+        let name = Name(
+            parser::NameParser::parse(
+                &mut test_name.chars().peekable(),
+                HashSet::from([' ', '\t']),
+            )
+            .unwrap(),
+        );
+
+        assert_eq!(
+            test_name.trim_end().to_string(),
+            <Name as Into<String>>::into(name)
+        );
     }
 }

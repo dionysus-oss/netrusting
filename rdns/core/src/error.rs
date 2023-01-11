@@ -18,6 +18,10 @@ pub enum RDNSError {
     #[error("the resource record is invalid")]
     ResourceRecordInvalid(),
 
+    // TODO capture line and char position
+    #[error("the format of the master file is invalid")]
+    MasterFileFormatError(String),
+
     #[error("i/o error")]
     IoError {
         #[from]

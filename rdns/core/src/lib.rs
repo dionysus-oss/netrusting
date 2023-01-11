@@ -2,7 +2,7 @@ use crate::name::Name;
 use bytes::Bytes;
 
 pub mod error;
-mod name;
+pub mod name;
 mod record;
 
 #[cfg(test)]
