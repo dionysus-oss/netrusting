@@ -1,5 +1,6 @@
 use crate::error::RDNSError;
 use std::collections::HashSet;
+use std::fmt::{Display, Formatter};
 use std::iter::Peekable;
 use std::str::Chars;
 
@@ -7,6 +8,10 @@ use std::str::Chars;
 pub struct Name(Vec<u8>);
 
 impl Name {
+    pub fn root() -> Self {
+        Name(vec![0])
+    }
+
     pub fn parse(repr: &mut Peekable<Chars>, stop_chars: HashSet<char>) -> Result<Name, RDNSError> {
         let result = parser::NameParser::parse(repr, stop_chars)?;
         Ok(Name(result))
@@ -14,6 +19,15 @@ impl Name {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn is_relative(&self) -> bool {
+        // Null terminated because of ending a '.'
+        self.0.last() == Some(&0)
+    }
+
+    pub fn raw(&self) -> Vec<u8> {
+        self.0.clone()
     }
 }
 
@@ -25,8 +39,18 @@ impl<'a> TryFrom<&'a str> for Name {
     }
 }
 
+impl Display for Name {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", <Name as Into<String>>::into(self.clone()))
+    }
+}
+
 impl Into<String> for Name {
     fn into(self) -> String {
+        if self.0.len() == 1 && *self.0.get(0).unwrap() == 0 {
+            return ".".to_string();
+        }
+
         let mut bytes = self.0.clone();
         let mut pos = 0;
 

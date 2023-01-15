@@ -1,10 +1,13 @@
 use crate::error::RDNSError;
 use crate::name::Name;
+use std::fmt::Debug;
+use std::net::Ipv4Addr;
 
-trait ResourceData: Sized {
-    fn serialise(self) -> Vec<u8>;
+pub trait ResourceData: Debug {
+    fn serialise(&self) -> Vec<u8>;
 }
 
+#[derive(Debug)]
 struct RawResourceData<'a>(&'a [u8]);
 
 impl<'a> RawResourceData<'a> {
@@ -14,12 +17,30 @@ impl<'a> RawResourceData<'a> {
 }
 
 impl<'a> ResourceData for RawResourceData<'a> {
-    fn serialise(self) -> Vec<u8> {
+    fn serialise(&self) -> Vec<u8> {
         self.0.to_owned()
     }
 }
 
-struct CNameResourceData(Name);
+#[derive(Debug)]
+pub struct AliasResourceData(pub Ipv4Addr);
+
+impl AliasResourceData {
+    fn read(source: &[u8]) -> Result<Self, RDNSError> {
+        Ok(AliasResourceData(Ipv4Addr::new(
+            source[0], source[1], source[2], source[3],
+        )))
+    }
+}
+
+impl ResourceData for AliasResourceData {
+    fn serialise(&self) -> Vec<u8> {
+        self.0.octets().to_vec()
+    }
+}
+
+#[derive(Debug)]
+pub struct CNameResourceData(pub Name);
 
 impl CNameResourceData {
     fn read(source: &[u8]) -> Result<Self, RDNSError> {
@@ -30,11 +51,12 @@ impl CNameResourceData {
 }
 
 impl ResourceData for CNameResourceData {
-    fn serialise(self) -> Vec<u8> {
-        self.0.into()
+    fn serialise(&self) -> Vec<u8> {
+        self.0.clone().into()
     }
 }
 
+#[derive(Debug)]
 struct HInfoResourceData(String);
 
 impl HInfoResourceData {
@@ -45,11 +67,12 @@ impl HInfoResourceData {
 }
 
 impl ResourceData for HInfoResourceData {
-    fn serialise(self) -> Vec<u8> {
-        self.0.into_bytes()
+    fn serialise(&self) -> Vec<u8> {
+        self.0.clone().into_bytes()
     }
 }
 
+#[derive(Debug)]
 struct MailExchangeResourceData {
     preference: u16,
     exchange: Name,
@@ -65,11 +88,11 @@ impl MailExchangeResourceData {
 }
 
 impl ResourceData for MailExchangeResourceData {
-    fn serialise(self) -> Vec<u8> {
+    fn serialise(&self) -> Vec<u8> {
         let mut result = Vec::with_capacity(2 + self.exchange.len());
         result.push((self.preference >> 8) as u8);
         result.push(self.preference as u8);
-        result.extend(<Name as Into<Vec<u8>>>::into(self.exchange).as_slice());
+        result.extend(<Name as Into<Vec<u8>>>::into(self.exchange.clone()).as_slice());
 
         result
     }

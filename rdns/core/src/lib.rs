@@ -1,32 +1,31 @@
 use crate::name::Name;
-use bytes::Bytes;
+use std::rc::Rc;
 
 pub mod error;
 pub mod name;
-mod record;
+pub mod record;
 
 #[cfg(test)]
 mod test;
 
-// A resource record (RR)
+/// A resource record (RR)
+#[derive(Clone)]
 pub struct ResourceRecord {
     /// The owner name of this resource record
     pub name: Name,
-    // The TYPE code
+    /// The TYPE code
     pub rr_type: RRType<u16>,
-    // The CLASS code
+    /// The CLASS code
     pub class: RRClass<u16>,
     /// The time interval that the resource may be cached for. A zero value means the record should
     /// not be cached.
     pub ttl: i32,
-    /// The length of the RDATA field
-    pub rd_length: u16,
-    // The value of the resource record
-    pub rdata: Bytes,
+    /// The value of the resource record
+    pub rdata: Rc<dyn record::ResourceData>,
 }
 
 /// Resource record TYPE
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RRType<T> {
     /// Alias, a host address
     A,
@@ -112,8 +111,34 @@ impl RRType<u16> {
     }
 }
 
+impl TryFrom<&str> for RRType<u16> {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Ok(match value {
+            "A" => RRType::A,
+            "NS" => RRType::NS,
+            "MD" => RRType::MD,
+            "MF" => RRType::MF,
+            "CNAME" => RRType::CNAME,
+            "SOA" => RRType::SOA,
+            "MB" => RRType::MB,
+            "MG" => RRType::MG,
+            "MR" => RRType::MR,
+            "NULL" => RRType::NULL,
+            "WKS" => RRType::WKS,
+            "PTR" => RRType::PTR,
+            "HINFO" => RRType::HINFO,
+            "MINFO" => RRType::MINFO,
+            "MX" => RRType::MX,
+            "TXT" => RRType::TXT,
+            _ => RRType::UNKNOWN(0),
+        })
+    }
+}
+
 /// Resource record CLASS
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RRClass<T> {
     /// Internet, the internet
     IN,
@@ -147,6 +172,20 @@ impl RRClass<u16> {
             4 => RRClass::HS,
             v => RRClass::UNKNOWN(v),
         }
+    }
+}
+
+impl TryFrom<&str> for RRClass<u16> {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Ok(match value {
+            "IN" => RRClass::IN,
+            "CS" => RRClass::CS,
+            "CH" => RRClass::CH,
+            "HS" => RRClass::HS,
+            _ => RRClass::UNKNOWN(0),
+        })
     }
 }
 
