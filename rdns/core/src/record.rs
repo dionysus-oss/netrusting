@@ -57,6 +57,41 @@ impl ResourceData for CNameResourceData {
 }
 
 #[derive(Debug)]
+pub struct SOAResourceData {
+    /// The name of the primary name server hosting the zone described by this SOA. Known as
+    /// the MNAME in RFC 1035
+    pub primary_name: Name,
+    /// The mailbox of the person responsible for this zone. Known as RNAME in RFC 1025.
+    pub responsible_name: Name,
+    /// The version number of the original copy of the zone
+    pub serial: u32,
+    /// Time interval before the zone should be refreshed
+    pub refresh: i32,
+    /// Time interval before a failed refresh should be retried
+    pub retry: i32,
+    /// Time interval that specifies an upper limit for the zone remaining authoritative
+    pub expire: i32,
+    /// The minimum TTL for RRs in this zone
+    pub minimum: u32,
+}
+
+impl ResourceData for SOAResourceData {
+    fn serialise(&self) -> Vec<u8> {
+        let mut result =
+            Vec::with_capacity(self.primary_name.len() + self.responsible_name.len() + 20);
+        result.append(&mut self.primary_name.clone().into());
+        result.append(&mut self.responsible_name.clone().into());
+        result.extend_from_slice(&self.serial.to_be_bytes());
+        result.extend_from_slice(&self.refresh.to_be_bytes());
+        result.extend_from_slice(&self.retry.to_be_bytes());
+        result.extend_from_slice(&self.expire.to_be_bytes());
+        result.extend_from_slice(&self.minimum.to_be_bytes());
+
+        result
+    }
+}
+
+#[derive(Debug)]
 struct HInfoResourceData(String);
 
 impl HInfoResourceData {
