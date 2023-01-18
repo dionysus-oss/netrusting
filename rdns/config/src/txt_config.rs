@@ -1,4 +1,5 @@
-use core::error::RDNSError;
+use rdns_core::error::{LineCharPos, RDNSError};
+use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, Lines, Read};
@@ -6,18 +7,18 @@ use std::iter::Peekable;
 use std::path::Path;
 use std::vec::IntoIter;
 
-pub fn load_txt_config<P>(path: P) -> Result<(), RDNSError>
+pub fn load_txt_config<P>(path: P) -> Result<Vec<rdns_core::ResourceRecord>, RDNSError>
 where
     P: AsRef<Path>,
 {
     let mut lines = read_lines(path)?;
 
-    parser::TxtConfigParser::parse(&mut lines, core::name::Name::root()).unwrap();
+    let records = parser::TxtConfigParser::parse(&mut lines, rdns_core::name::Name::root())?;
 
-    Ok(())
+    Ok(records)
 }
 
-fn read_lines<P>(path: P) -> io::Result<io::Lines<BufReader<File>>>
+fn read_lines<P>(path: P) -> io::Result<Lines<BufReader<File>>>
 where
     P: AsRef<Path>,
 {
@@ -28,6 +29,8 @@ where
 struct ParserReader<'a, R: Read + BufRead> {
     lines: &'a mut Lines<R>,
     line: Peekable<IntoIter<u8>>,
+    line_num: u32,
+    char_num: u32,
 }
 
 impl<'a, R: Read + BufRead> ParserReader<'a, R> {
@@ -41,6 +44,8 @@ impl<'a, R: Read + BufRead> ParserReader<'a, R> {
         ParserReader {
             lines,
             line: line.into_bytes().into_iter().peekable(),
+            line_num: 1,
+            char_num: 1,
         }
     }
 
@@ -49,6 +54,7 @@ impl<'a, R: Read + BufRead> ParserReader<'a, R> {
     }
 
     fn next_char(&mut self) -> Option<u8> {
+        self.char_num += 1;
         self.line.next()
     }
 
@@ -63,15 +69,23 @@ impl<'a, R: Read + BufRead> ParserReader<'a, R> {
             return false;
         };
 
+        self.line_num += 1;
         self.line = line.into_bytes().into_iter().peekable();
 
         true
+    }
+
+    fn current_position(&self) -> LineCharPos {
+        LineCharPos {
+            line: self.line_num,
+            char: self.char_num,
+        }
     }
 }
 
 mod parser {
     use crate::txt_config::{read_lines, ParserReader};
-    use core::error::RDNSError;
+    use rdns_core::error::RDNSError;
     use std::collections::HashSet;
     use std::io::{BufRead, Lines, Read};
     use std::net::Ipv4Addr;
@@ -81,27 +95,27 @@ mod parser {
 
     pub struct TxtConfigParser<'a, R: Read + BufRead> {
         state: ParserReader<'a, R>,
-        current_origin: core::name::Name,
-        current_name: Option<core::name::Name>,
-        current_class: core::RRClass<u16>,
+        current_origin: rdns_core::name::Name,
+        current_name: Option<rdns_core::name::Name>,
+        current_class: rdns_core::RRClass<u16>,
         multiline: bool,
     }
 
     impl<'a, R: Read + BufRead> TxtConfigParser<'a, R> {
-        fn new(lines: &'a mut Lines<R>, origin: core::name::Name) -> Self {
+        fn new(lines: &'a mut Lines<R>, origin: rdns_core::name::Name) -> Self {
             TxtConfigParser {
                 state: ParserReader::new(lines),
                 current_origin: origin,
                 current_name: None,
-                current_class: core::RRClass::UNKNOWN(0),
+                current_class: rdns_core::RRClass::UNKNOWN(0),
                 multiline: false,
             }
         }
 
         pub fn parse(
             lines: &'a mut Lines<R>,
-            origin: core::name::Name,
-        ) -> Result<Vec<core::ResourceRecord>, RDNSError> {
+            origin: rdns_core::name::Name,
+        ) -> Result<Vec<rdns_core::ResourceRecord>, RDNSError> {
             let mut parser = TxtConfigParser::new(lines, origin);
 
             let mut records = Vec::new();
@@ -139,7 +153,7 @@ mod parser {
 
             println!(
                 "final root is {}",
-                <core::name::Name as Into<String>>::into(parser.current_origin.clone())
+                <rdns_core::name::Name as Into<String>>::into(parser.current_origin.clone())
             );
 
             Ok(records)
@@ -157,6 +171,7 @@ mod parser {
                 } else {
                     return Err(RDNSError::MasterFileFormatError(
                         "a control directive should only contain letters".to_string(),
+                        self.state.current_position(),
                     ));
                 }
             }
@@ -179,17 +194,17 @@ mod parser {
                     TxtConfigParser::parse(&mut sub_lines, domain_name)?;
                 }
                 _ => {
-                    return Err(RDNSError::MasterFileFormatError(format!(
-                        "unknown control directive {}",
-                        control_name
-                    )));
+                    return Err(RDNSError::MasterFileFormatError(
+                        format!("unknown control directive {}", control_name),
+                        self.state.current_position(),
+                    ));
                 }
             };
 
             Ok(())
         }
 
-        fn parse_name_and_rr(&mut self) -> Result<core::ResourceRecord, RDNSError> {
+        fn parse_name_and_rr(&mut self) -> Result<rdns_core::ResourceRecord, RDNSError> {
             self.current_name = Some(self.parse_domain_name()?);
 
             self.chomp();
@@ -200,22 +215,23 @@ mod parser {
             rr
         }
 
-        fn parse_rr(&mut self) -> Result<core::ResourceRecord, RDNSError> {
+        fn parse_rr(&mut self) -> Result<rdns_core::ResourceRecord, RDNSError> {
             let mut ttl_opt = self.try_parse_ttl()?;
             self.chomp();
 
             let text = self.get_text()?;
-            let class: core::RRClass<u16> = text.as_str().try_into().unwrap();
+            let class: rdns_core::RRClass<u16> = text.as_str().try_into().unwrap();
             self.chomp();
 
-            let mut rr_type: Option<core::RRType<u16>> = if class == core::RRClass::UNKNOWN(0) {
-                Some(text.as_str().try_into().unwrap())
-            } else {
-                None
-            };
+            let mut rr_type: Option<rdns_core::RRType<u16>> =
+                if class == rdns_core::RRClass::UNKNOWN(0) {
+                    Some(text.as_str().try_into().unwrap())
+                } else {
+                    None
+                };
 
             // TODO constant for unknown
-            if rr_type == None || rr_type == Some(core::RRType::UNKNOWN(0)) {
+            if rr_type == None || rr_type == Some(rdns_core::RRType::UNKNOWN(0)) {
                 if ttl_opt == None {
                     ttl_opt = self.try_parse_ttl()?;
                     self.chomp();
@@ -226,39 +242,44 @@ mod parser {
                 self.chomp();
             }
 
-            if class == core::RRClass::UNKNOWN(0) {
-                return Err(RDNSError::MasterFileFormatError("No class".to_string()));
-            } else if self.current_class == core::RRClass::UNKNOWN(0) {
+            if class == rdns_core::RRClass::UNKNOWN(0) {
+                return Err(RDNSError::MasterFileFormatError(
+                    "No class".to_string(),
+                    self.state.current_position(),
+                ));
+            } else if self.current_class == rdns_core::RRClass::UNKNOWN(0) {
                 self.current_class = class.clone();
             } else if self.current_class == class {
                 // TODO propagate to included files?
                 return Err(RDNSError::MasterFileFormatError(
                     "File must only contain one class".to_string(),
+                    self.state.current_position(),
                 ));
             }
 
-            let rr_data: Rc<dyn core::record::ResourceData> = match rr_type {
-                Some(core::RRType::A) => {
+            let rr_data: Rc<dyn rdns_core::record::ResourceData> = match rr_type {
+                Some(rdns_core::RRType::A) => {
                     let ip_address = self.parse_ip_addr()?;
-                    Rc::new(core::record::AliasResourceData(ip_address))
+                    Rc::new(rdns_core::record::AliasResourceData(ip_address))
                 }
-                Some(core::RRType::NS) => {
+                Some(rdns_core::RRType::NS) => {
                     let name = self.parse_domain_name()?;
-                    Rc::new(core::record::NameServerResourceData(name))
+                    Rc::new(rdns_core::record::NameServerResourceData(name))
                 }
-                Some(core::RRType::CNAME) => {
+                Some(rdns_core::RRType::CNAME) => {
                     let name = self.parse_domain_name()?;
-                    Rc::new(core::record::CNameResourceData(name))
+                    Rc::new(rdns_core::record::CNameResourceData(name))
                 }
-                Some(core::RRType::SOA) => Rc::new(self.parse_soa()?),
+                Some(rdns_core::RRType::SOA) => Rc::new(self.parse_soa()?),
                 _ => {
                     return Err(RDNSError::MasterFileFormatError(
                         "unknown resource record type".to_string(),
+                        self.state.current_position(),
                     ));
                 }
             };
 
-            Ok(core::ResourceRecord {
+            Ok(rdns_core::ResourceRecord {
                 name: self.current_name.as_ref().unwrap().clone(),
                 rr_type: rr_type.unwrap(),
                 class,
@@ -267,7 +288,7 @@ mod parser {
             })
         }
 
-        fn parse_soa(&mut self) -> Result<core::record::SOAResourceData, RDNSError> {
+        fn parse_soa(&mut self) -> Result<rdns_core::record::SOAResourceData, RDNSError> {
             self.parse_common_in_rr()?;
             let primary_name = self.parse_domain_name()?;
             self.parse_common_in_rr()?;
@@ -283,7 +304,7 @@ mod parser {
             self.parse_common_in_rr()?;
             let minimum: u32 = self.parse_number()?;
 
-            return Ok(core::record::SOAResourceData {
+            return Ok(rdns_core::record::SOAResourceData {
                 primary_name,
                 responsible_name,
                 serial,
@@ -294,23 +315,35 @@ mod parser {
             });
         }
 
-        fn parse_domain_name(&mut self) -> Result<core::name::Name, RDNSError> {
+        fn parse_domain_name(&mut self) -> Result<rdns_core::name::Name, RDNSError> {
             let name = if let Some(b'@') = self.state.peek_char() {
                 self.state.next_char();
                 self.current_origin.clone()
             } else {
-                core::name::Name::parse(&mut self.state.borrow(), HashSet::from([b' ', b'\t']))?
+                let result = rdns_core::name::Name::parse(
+                    &mut self.state.borrow(),
+                    HashSet::from([b' ', b'\t']),
+                );
+                match result {
+                    Ok(name) => name,
+                    Err(e) => {
+                        return Err(RDNSError::MasterFileFormatError(
+                            e.to_string(),
+                            self.state.current_position(),
+                        ))
+                    }
+                }
             };
 
             println!(
                 "found name {}",
-                <core::name::Name as Into<String>>::into(name.clone())
+                <rdns_core::name::Name as Into<String>>::into(name.clone())
             );
 
             Ok(name)
         }
 
-        fn maybe_parse_domain_name(&mut self) -> Result<Option<core::name::Name>, RDNSError> {
+        fn maybe_parse_domain_name(&mut self) -> Result<Option<rdns_core::name::Name>, RDNSError> {
             self.chomp();
             match self.state.peek_char() {
                 Some(b';') | None => Ok(None),
@@ -322,6 +355,7 @@ mod parser {
             if !self.chomp() {
                 return Err(RDNSError::MasterFileFormatError(
                     "expected whitespace separating the file name".to_string(),
+                    self.state.current_position(),
                 ));
             }
 
@@ -371,14 +405,16 @@ mod parser {
                             _ => {
                                 return Err(RDNSError::MasterFileFormatError(
                                     "Invalid part of IP address".to_string(),
-                                ))
+                                    self.state.current_position(),
+                                ));
                             }
                         }
                     }
                     _ => {
                         return Err(RDNSError::MasterFileFormatError(
                             "Invalid IP address format".to_string(),
-                        ))
+                            self.state.current_position(),
+                        ));
                     }
                 }
 
@@ -398,6 +434,7 @@ mod parser {
                         if self.multiline {
                             return Err(RDNSError::MasterFileFormatError(
                                 "Cannot nest multi-line blocks".to_string(),
+                                self.state.current_position(),
                             ));
                         }
 
@@ -409,6 +446,7 @@ mod parser {
                         if !self.multiline {
                             return Err(RDNSError::MasterFileFormatError(
                                 "Not in a multi-line block".to_string(),
+                                self.state.current_position(),
                             ));
                         }
 
@@ -440,8 +478,12 @@ mod parser {
 
             println!("parse number {}", str);
 
-            str.parse::<T>()
-                .map_err(|_| RDNSError::MasterFileFormatError("Invalid number".to_string()))
+            str.parse::<T>().map_err(|_| {
+                RDNSError::MasterFileFormatError(
+                    "Invalid number".to_string(),
+                    self.state.current_position(),
+                )
+            })
         }
 
         fn get_text(&mut self) -> Result<String, RDNSError> {
@@ -486,7 +528,7 @@ mod parser {
 #[cfg(test)]
 mod tests {
     use crate::txt_config::parser;
-    use core::record::ResourceData;
+    use rdns_core::record::ResourceData;
     use std::collections::HashSet;
     use std::io::{BufRead, Cursor, Lines};
 
@@ -494,7 +536,7 @@ mod tests {
     fn parse_comment_on_own_line() {
         parser::TxtConfigParser::parse(
             &mut as_lines("; a comment".to_string()),
-            core::name::Name::root(),
+            rdns_core::name::Name::root(),
         )
         .unwrap();
     }
@@ -503,7 +545,7 @@ mod tests {
     fn parse_origin_control_directive() {
         parser::TxtConfigParser::parse(
             &mut as_lines("$ORIGIN example.com".to_string()),
-            core::name::Name::root(),
+            rdns_core::name::Name::root(),
         )
         .unwrap();
     }
@@ -512,7 +554,7 @@ mod tests {
     fn parse_origin_control_directive_with_comment() {
         parser::TxtConfigParser::parse(
             &mut as_lines("$ORIGIN example.com ; some information".to_string()),
-            core::name::Name::root(),
+            rdns_core::name::Name::root(),
         )
         .unwrap();
     }
@@ -521,7 +563,7 @@ mod tests {
     fn parse_origin_control_directive_with_comment_tabs() {
         parser::TxtConfigParser::parse(
             &mut as_lines("$ORIGIN\texample.com\t; some information".to_string()),
-            core::name::Name::root(),
+            rdns_core::name::Name::root(),
         )
         .unwrap();
     }
@@ -530,7 +572,7 @@ mod tests {
     fn parse_cname_rr() {
         let records = parser::TxtConfigParser::parse(
             &mut as_lines("exemplar.com. IN 300 CNAME example.com".to_string()),
-            core::name::Name::root(),
+            rdns_core::name::Name::root(),
         )
         .unwrap();
 
@@ -539,19 +581,19 @@ mod tests {
         let first_record = records.get(0).unwrap().clone();
         assert_eq!(
             "exemplar.com.",
-            <core::name::Name as Into<String>>::into(first_record.name.clone())
+            <rdns_core::name::Name as Into<String>>::into(first_record.name.clone())
         );
-        assert_eq!(core::RRType::CNAME, first_record.rr_type);
-        assert_eq!(core::RRClass::IN, first_record.class);
+        assert_eq!(rdns_core::RRType::CNAME, first_record.rr_type);
+        assert_eq!(rdns_core::RRClass::IN, first_record.class);
         assert_eq!(300, first_record.ttl);
         assert_eq!(
-            core::name::Name::parse(
+            rdns_core::name::Name::parse(
                 &mut "example.com"
                     .to_string()
                     .into_bytes()
                     .into_iter()
                     .peekable(),
-                HashSet::new()
+                HashSet::new(),
             )
             .unwrap()
             .raw(),
@@ -563,7 +605,7 @@ mod tests {
     fn parse_alias_rr() {
         let records = parser::TxtConfigParser::parse(
             &mut as_lines("exemplar.com. IN 300 A 1.2.3.4".to_string()),
-            core::name::Name::root(),
+            rdns_core::name::Name::root(),
         )
         .unwrap();
 
@@ -572,10 +614,10 @@ mod tests {
         let first_record = records.get(0).unwrap().clone();
         assert_eq!(
             "exemplar.com.",
-            <core::name::Name as Into<String>>::into(first_record.name.clone())
+            <rdns_core::name::Name as Into<String>>::into(first_record.name.clone())
         );
-        assert_eq!(core::RRType::A, first_record.rr_type);
-        assert_eq!(core::RRClass::IN, first_record.class);
+        assert_eq!(rdns_core::RRType::A, first_record.rr_type);
+        assert_eq!(rdns_core::RRClass::IN, first_record.class);
         assert_eq!(300, first_record.ttl);
         assert_eq!(vec![1, 2, 3, 4], first_record.rdata.serialise());
     }
@@ -584,7 +626,7 @@ mod tests {
     fn parse_name_server_rr() {
         let records = parser::TxtConfigParser::parse(
             &mut as_lines("exemplar.com. IN NS hosting".to_string()),
-            core::name::Name::root(),
+            rdns_core::name::Name::root(),
         )
         .unwrap();
 
@@ -593,15 +635,15 @@ mod tests {
         let first_record = records.get(0).unwrap().clone();
         assert_eq!(
             "exemplar.com.",
-            <core::name::Name as Into<String>>::into(first_record.name.clone())
+            <rdns_core::name::Name as Into<String>>::into(first_record.name.clone())
         );
-        assert_eq!(core::RRType::NS, first_record.rr_type);
-        assert_eq!(core::RRClass::IN, first_record.class);
+        assert_eq!(rdns_core::RRType::NS, first_record.rr_type);
+        assert_eq!(rdns_core::RRClass::IN, first_record.class);
         assert_eq!(0, first_record.ttl);
         assert_eq!(
-            core::name::Name::parse(
+            rdns_core::name::Name::parse(
                 &mut "hosting".to_string().into_bytes().into_iter().peekable(),
-                HashSet::new()
+                HashSet::new(),
             )
             .unwrap()
             .raw(),
@@ -613,7 +655,7 @@ mod tests {
     fn use_at_symbol_in_place_of_owner_name() {
         let records = parser::TxtConfigParser::parse(
             &mut as_lines("$ORIGIN exemplar.com.\n@ IN 300 CNAME example.com".to_string()),
-            core::name::Name::root(),
+            rdns_core::name::Name::root(),
         )
         .unwrap();
 
@@ -622,19 +664,19 @@ mod tests {
         let first_record = records.get(0).unwrap().clone();
         assert_eq!(
             "exemplar.com.",
-            <core::name::Name as Into<String>>::into(first_record.name.clone())
+            <rdns_core::name::Name as Into<String>>::into(first_record.name.clone())
         );
-        assert_eq!(core::RRType::CNAME, first_record.rr_type);
-        assert_eq!(core::RRClass::IN, first_record.class);
+        assert_eq!(rdns_core::RRType::CNAME, first_record.rr_type);
+        assert_eq!(rdns_core::RRClass::IN, first_record.class);
         assert_eq!(300, first_record.ttl);
         assert_eq!(
-            core::name::Name::parse(
+            rdns_core::name::Name::parse(
                 &mut "example.com"
                     .to_string()
                     .into_bytes()
                     .into_iter()
                     .peekable(),
-                HashSet::new()
+                HashSet::new(),
             )
             .unwrap()
             .raw(),
@@ -646,7 +688,7 @@ mod tests {
     fn parse_soa_rr_on_single_line() {
         let records = parser::TxtConfigParser::parse(
             &mut as_lines("@ IN SOA nameserver1 owner 20 7200 600 3600000 60".to_string()),
-            core::name::Name::root(),
+            rdns_core::name::Name::root(),
         )
         .unwrap();
 
@@ -655,25 +697,25 @@ mod tests {
         let first_record = records.get(0).unwrap().clone();
         assert_eq!(
             ".",
-            <core::name::Name as Into<String>>::into(first_record.name.clone())
+            <rdns_core::name::Name as Into<String>>::into(first_record.name.clone())
         );
-        assert_eq!(core::RRType::SOA, first_record.rr_type);
-        assert_eq!(core::RRClass::IN, first_record.class);
+        assert_eq!(rdns_core::RRType::SOA, first_record.rr_type);
+        assert_eq!(rdns_core::RRClass::IN, first_record.class);
         assert_eq!(0, first_record.ttl);
         assert_eq!(
-            core::record::SOAResourceData {
-                primary_name: core::name::Name::parse(
+            rdns_core::record::SOAResourceData {
+                primary_name: rdns_core::name::Name::parse(
                     &mut "nameserver1"
                         .to_string()
                         .into_bytes()
                         .into_iter()
                         .peekable(),
-                    HashSet::new()
+                    HashSet::new(),
                 )
                 .unwrap(),
-                responsible_name: core::name::Name::parse(
+                responsible_name: rdns_core::name::Name::parse(
                     &mut "owner".to_string().into_bytes().into_iter().peekable(),
-                    HashSet::new()
+                    HashSet::new(),
                 )
                 .unwrap(),
                 serial: 20,
@@ -693,7 +735,7 @@ mod tests {
             &mut as_lines(
                 "@ IN SOA nameserver1 owner (20\n 7200\n 600\n 3600000\n 60)".to_string(),
             ),
-            core::name::Name::root(),
+            rdns_core::name::Name::root(),
         )
         .unwrap();
 
@@ -702,25 +744,25 @@ mod tests {
         let first_record = records.get(0).unwrap().clone();
         assert_eq!(
             ".",
-            <core::name::Name as Into<String>>::into(first_record.name.clone())
+            <rdns_core::name::Name as Into<String>>::into(first_record.name.clone())
         );
-        assert_eq!(core::RRType::SOA, first_record.rr_type);
-        assert_eq!(core::RRClass::IN, first_record.class);
+        assert_eq!(rdns_core::RRType::SOA, first_record.rr_type);
+        assert_eq!(rdns_core::RRClass::IN, first_record.class);
         assert_eq!(0, first_record.ttl);
         assert_eq!(
-            core::record::SOAResourceData {
-                primary_name: core::name::Name::parse(
+            rdns_core::record::SOAResourceData {
+                primary_name: rdns_core::name::Name::parse(
                     &mut "nameserver1"
                         .to_string()
                         .into_bytes()
                         .into_iter()
                         .peekable(),
-                    HashSet::new()
+                    HashSet::new(),
                 )
                 .unwrap(),
-                responsible_name: core::name::Name::parse(
+                responsible_name: rdns_core::name::Name::parse(
                     &mut "owner".to_string().into_bytes().into_iter().peekable(),
-                    HashSet::new()
+                    HashSet::new(),
                 )
                 .unwrap(),
                 serial: 20,

@@ -2,5 +2,6 @@
 members = [
     "rcat",
     "rdns/core",
-    "rdns/config"
+    "rdns/config",
+    "rdns/server",
 ]
