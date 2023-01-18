@@ -70,6 +70,7 @@ impl<'a, R: Read + BufRead> ParserReader<'a, R> {
         };
 
         self.line_num += 1;
+        self.char_num = 1;
         self.line = line.into_bytes().into_iter().peekable();
 
         true
@@ -440,7 +441,6 @@ mod parser {
 
                         self.multiline = true;
                         self.state.next_char();
-                        break;
                     }
                     Some(b')') => {
                         if !self.multiline {
