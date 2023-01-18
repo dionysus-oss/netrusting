@@ -1,8 +1,10 @@
 use core::error::RDNSError;
 use std::fs::File;
 use std::io;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Lines, Read};
+use std::iter::Peekable;
 use std::path::Path;
+use std::vec::IntoIter;
 
 pub fn load_txt_config<P>(path: P) -> Result<(), RDNSError>
 where
@@ -23,31 +25,76 @@ where
     Ok(BufReader::new(file).lines())
 }
 
+struct ParserReader<'a, R: Read + BufRead> {
+    lines: &'a mut Lines<R>,
+    line: Peekable<IntoIter<u8>>,
+}
+
+impl<'a, R: Read + BufRead> ParserReader<'a, R> {
+    fn new(lines: &'a mut Lines<R>) -> Self {
+        let line = if let Some(Ok(line)) = lines.next() {
+            line
+        } else {
+            "".to_string()
+        };
+
+        ParserReader {
+            lines,
+            line: line.into_bytes().into_iter().peekable(),
+        }
+    }
+
+    fn peek_char(&mut self) -> Option<&u8> {
+        self.line.peek()
+    }
+
+    fn next_char(&mut self) -> Option<u8> {
+        self.line.next()
+    }
+
+    fn borrow(&mut self) -> &mut Peekable<IntoIter<u8>> {
+        &mut self.line
+    }
+
+    fn next_line(&mut self) -> bool {
+        let line = if let Some(Ok(line)) = self.lines.next() {
+            line
+        } else {
+            return false;
+        };
+
+        self.line = line.into_bytes().into_iter().peekable();
+
+        true
+    }
+}
+
 mod parser {
-    use crate::txt_config::read_lines;
+    use crate::txt_config::{read_lines, ParserReader};
     use core::error::RDNSError;
     use std::collections::HashSet;
     use std::io::{BufRead, Lines, Read};
-    use std::iter::Peekable;
     use std::net::Ipv4Addr;
     use std::path::PathBuf;
     use std::rc::Rc;
-    use std::str::{Chars, FromStr};
+    use std::str::FromStr;
 
     pub struct TxtConfigParser<'a, R: Read + BufRead> {
-        lines: &'a mut Lines<R>,
+        state: ParserReader<'a, R>,
         current_origin: core::name::Name,
         current_name: Option<core::name::Name>,
         current_class: core::RRClass<u16>,
+        multiline: bool,
     }
 
     impl<'a, R: Read + BufRead> TxtConfigParser<'a, R> {
         fn new(lines: &'a mut Lines<R>, origin: core::name::Name) -> Self {
             TxtConfigParser {
-                lines,
+                state: ParserReader::new(lines),
                 current_origin: origin,
                 current_name: None,
                 current_class: core::RRClass::UNKNOWN(0),
+                multiline: false,
             }
         }
 
@@ -62,28 +109,31 @@ mod parser {
 
             println!("origin is {}", parser.current_origin);
 
-            'lines: while let Some(Ok(next)) = parser.lines.next() {
-                let mut line = next.chars().peekable();
+            'lines: loop {
                 start_of_line = true;
 
-                while let Some(ch) = line.peek() {
+                while let Some(ch) = parser.state.peek_char() {
                     match ch {
-                        ' ' | '\t' => {
-                            line.next();
+                        b' ' | b'\t' => {
+                            parser.state.next_char();
                             start_of_line = false;
                         }
-                        ';' => continue 'lines,
-                        '$' => parser.parse_control_entry(&mut line)?,
+                        b';' => break,
+                        b'$' => parser.parse_control_entry()?,
                         _ => {
                             let rr = if start_of_line {
-                                parser.parse_name_and_rr(&mut line)?
+                                parser.parse_name_and_rr()?
                             } else {
-                                parser.parse_rr(&mut line)?
+                                parser.parse_rr()?
                             };
                             records.push(rr);
-                            break 'lines;
+                            break;
                         }
                     };
+                }
+
+                if !parser.state.next_line() {
+                    break 'lines;
                 }
             }
 
@@ -95,15 +145,15 @@ mod parser {
             Ok(records)
         }
 
-        fn parse_control_entry(&mut self, line: &mut Peekable<Chars>) -> Result<(), RDNSError> {
-            line.next();
+        fn parse_control_entry(&mut self) -> Result<(), RDNSError> {
+            self.state.next_char();
 
             let mut control_name = String::new();
-            while let Some(&ch) = line.peek() {
-                if ch == ' ' || ch == '\t' {
+            while let Some(&ch) = self.state.peek_char() {
+                if ch == b' ' || ch == b'\t' {
                     break;
                 } else if self.is_character(ch) {
-                    control_name.push(line.next().unwrap());
+                    control_name.push(self.state.next_char().unwrap() as char);
                 } else {
                     return Err(RDNSError::MasterFileFormatError(
                         "a control directive should only contain letters".to_string(),
@@ -113,14 +163,14 @@ mod parser {
 
             match control_name.as_str() {
                 "ORIGIN" => {
-                    self.chomp(line);
-                    let name = self.parse_domain_name(line)?;
+                    self.chomp();
+                    let name = self.parse_domain_name()?;
                     self.current_origin = name;
                 }
                 "INCLUDE" => {
-                    let file_name = self.parse_file_name(line)?;
+                    let file_name = self.parse_file_name()?;
                     let domain_name = self
-                        .maybe_parse_domain_name(line)?
+                        .maybe_parse_domain_name()?
                         .unwrap_or(self.current_origin.clone());
 
                     let mut sub_lines = read_lines(file_name)?;
@@ -139,30 +189,24 @@ mod parser {
             Ok(())
         }
 
-        fn parse_name_and_rr(
-            &mut self,
-            line: &mut Peekable<Chars>,
-        ) -> Result<core::ResourceRecord, RDNSError> {
-            self.current_name = Some(self.parse_domain_name(line)?);
+        fn parse_name_and_rr(&mut self) -> Result<core::ResourceRecord, RDNSError> {
+            self.current_name = Some(self.parse_domain_name()?);
 
-            self.chomp(line);
-            let rr = self.parse_rr(line);
+            self.chomp();
+            let rr = self.parse_rr();
 
             self.current_name = None;
 
             rr
         }
 
-        fn parse_rr(
-            &mut self,
-            line: &mut Peekable<Chars>,
-        ) -> Result<core::ResourceRecord, RDNSError> {
-            let mut ttl_opt = self.try_parse_ttl(line)?;
-            self.chomp(line);
+        fn parse_rr(&mut self) -> Result<core::ResourceRecord, RDNSError> {
+            let mut ttl_opt = self.try_parse_ttl()?;
+            self.chomp();
 
-            let text = self.get_text(line)?;
+            let text = self.get_text()?;
             let class: core::RRClass<u16> = text.as_str().try_into().unwrap();
-            self.chomp(line);
+            self.chomp();
 
             let mut rr_type: Option<core::RRType<u16>> = if class == core::RRClass::UNKNOWN(0) {
                 Some(text.as_str().try_into().unwrap())
@@ -173,13 +217,13 @@ mod parser {
             // TODO constant for unknown
             if rr_type == None || rr_type == Some(core::RRType::UNKNOWN(0)) {
                 if ttl_opt == None {
-                    ttl_opt = self.try_parse_ttl(line)?;
-                    self.chomp(line);
+                    ttl_opt = self.try_parse_ttl()?;
+                    self.chomp();
                 }
 
-                let text = self.get_text(line)?;
+                let text = self.get_text()?;
                 rr_type = Some(text.as_str().try_into().unwrap());
-                self.chomp(line);
+                self.chomp();
             }
 
             if class == core::RRClass::UNKNOWN(0) {
@@ -195,15 +239,15 @@ mod parser {
 
             let rr_data: Rc<dyn core::record::ResourceData> = match rr_type {
                 Some(core::RRType::A) => {
-                    let ip_address = self.parse_ip_addr(line)?;
+                    let ip_address = self.parse_ip_addr()?;
                     Rc::new(core::record::AliasResourceData(ip_address))
                 }
                 //Some(core::RRType::NS) => {}
                 Some(core::RRType::CNAME) => {
-                    let name = self.parse_domain_name(line)?;
+                    let name = self.parse_domain_name()?;
                     Rc::new(core::record::CNameResourceData(name))
                 }
-                Some(core::RRType::SOA) => Rc::new(self.parse_soa(line)?),
+                Some(core::RRType::SOA) => Rc::new(self.parse_soa()?),
                 _ => {
                     return Err(RDNSError::MasterFileFormatError(
                         "unknown resource record type".to_string(),
@@ -220,24 +264,21 @@ mod parser {
             })
         }
 
-        fn parse_soa(
-            &self,
-            line: &mut Peekable<Chars>,
-        ) -> Result<core::record::SOAResourceData, RDNSError> {
-            self.chomp(line);
-            let primary_name = self.parse_domain_name(line)?;
-            self.chomp(line);
-            let responsible_name = self.parse_domain_name(line)?;
-            self.chomp(line);
-            let serial: u32 = self.parse_number(line)?;
-            self.chomp(line);
-            let refresh: i32 = self.parse_number(line)?;
-            self.chomp(line);
-            let retry: i32 = self.parse_number(line)?;
-            self.chomp(line);
-            let expire: i32 = self.parse_number(line)?;
-            self.chomp(line);
-            let minimum: u32 = self.parse_number(line)?;
+        fn parse_soa(&mut self) -> Result<core::record::SOAResourceData, RDNSError> {
+            self.parse_common_in_rr()?;
+            let primary_name = self.parse_domain_name()?;
+            self.parse_common_in_rr()?;
+            let responsible_name = self.parse_domain_name()?;
+            self.parse_common_in_rr()?;
+            let serial: u32 = self.parse_number()?;
+            self.parse_common_in_rr()?;
+            let refresh: i32 = self.parse_number()?;
+            self.parse_common_in_rr()?;
+            let retry: i32 = self.parse_number()?;
+            self.parse_common_in_rr()?;
+            let expire: i32 = self.parse_number()?;
+            self.parse_common_in_rr()?;
+            let minimum: u32 = self.parse_number()?;
 
             return Ok(core::record::SOAResourceData {
                 primary_name,
@@ -250,15 +291,12 @@ mod parser {
             });
         }
 
-        fn parse_domain_name(
-            &self,
-            line: &mut Peekable<Chars>,
-        ) -> Result<core::name::Name, RDNSError> {
-            let name = if let Some('@') = line.peek() {
-                line.next();
+        fn parse_domain_name(&mut self) -> Result<core::name::Name, RDNSError> {
+            let name = if let Some(b'@') = self.state.peek_char() {
+                self.state.next_char();
                 self.current_origin.clone()
             } else {
-                core::name::Name::parse(line, HashSet::from([' ', '\t']))?
+                core::name::Name::parse(&mut self.state.borrow(), HashSet::from([b' ', b'\t']))?
             };
 
             println!(
@@ -269,59 +307,56 @@ mod parser {
             Ok(name)
         }
 
-        fn maybe_parse_domain_name(
-            &self,
-            line: &mut Peekable<Chars>,
-        ) -> Result<Option<core::name::Name>, RDNSError> {
-            self.chomp(line);
-            match line.peek() {
-                Some(';') | None => Ok(None),
-                Some(_) => self.parse_domain_name(line).map(|n| Some(n)),
+        fn maybe_parse_domain_name(&mut self) -> Result<Option<core::name::Name>, RDNSError> {
+            self.chomp();
+            match self.state.peek_char() {
+                Some(b';') | None => Ok(None),
+                Some(_) => self.parse_domain_name().map(|n| Some(n)),
             }
         }
 
-        fn parse_file_name(&self, line: &mut Peekable<Chars>) -> Result<PathBuf, RDNSError> {
-            if !self.chomp(line) {
+        fn parse_file_name(&mut self) -> Result<PathBuf, RDNSError> {
+            if !self.chomp() {
                 return Err(RDNSError::MasterFileFormatError(
                     "expected whitespace separating the file name".to_string(),
                 ));
             }
 
             let mut path_builder = String::new();
-            while let Some(&ch) = line.peek() {
+            while let Some(&ch) = self.state.peek_char() {
                 if !self.is_whitespace(ch) {
-                    path_builder.push(line.next().unwrap())
+                    path_builder.push(self.state.next_char().unwrap() as char)
                 }
             }
 
             Ok(path_builder.into())
         }
 
-        fn try_parse_ttl(&self, line: &mut Peekable<Chars>) -> Result<Option<i32>, RDNSError> {
-            let first = line.peek();
+        fn try_parse_ttl(&mut self) -> Result<Option<i32>, RDNSError> {
+            let first = self.state.peek_char();
 
             if let Some(&ch) = first {
-                if ch.is_digit(10) {
-                    return self.parse_number::<i32>(line).map(|ttl| Some(ttl));
+                if ch.is_ascii_digit() {
+                    return self.parse_number::<i32>().map(|ttl| Some(ttl));
                 }
             }
 
             Ok(None)
         }
 
-        fn parse_ip_addr(&self, line: &mut Peekable<Chars>) -> Result<Ipv4Addr, RDNSError> {
+        fn parse_ip_addr(&mut self) -> Result<Ipv4Addr, RDNSError> {
             let mut addr: u32 = 0;
 
             let mut part_number = 0;
             let mut part = String::new();
 
             loop {
-                match line.peek() {
-                    Some('0'..='9') => {
-                        part.push(line.next().unwrap());
+                match self.state.peek_char() {
+                    Some(b'0'..=b'9') => {
+                        part.push(self.state.next_char().unwrap() as char);
                     }
-                    Some('.' | ' ' | '\t') | None => {
-                        line.next();
+                    Some(b'.' | b' ' | b'\t') | None => {
+                        self.state.next_char();
                         println!("parse {}", part);
                         let parsed = part.parse::<u8>();
                         match parsed {
@@ -352,25 +387,65 @@ mod parser {
             Ok(Ipv4Addr::from(addr))
         }
 
-        fn parse_number<T: FromStr>(&self, line: &mut Peekable<Chars>) -> Result<T, RDNSError> {
+        fn parse_common_in_rr(&mut self) -> Result<(), RDNSError> {
+            loop {
+                self.chomp();
+                match self.state.peek_char() {
+                    Some(b'(') => {
+                        if self.multiline {
+                            return Err(RDNSError::MasterFileFormatError(
+                                "Cannot nest multi-line blocks".to_string(),
+                            ));
+                        }
+
+                        self.multiline = true;
+                        self.state.next_char();
+                        break;
+                    }
+                    Some(b')') => {
+                        if !self.multiline {
+                            return Err(RDNSError::MasterFileFormatError(
+                                "Not in a multi-line block".to_string(),
+                            ));
+                        }
+
+                        self.multiline = false;
+                        self.state.next_char();
+                        break;
+                    }
+                    Some(b';') | None => {
+                        self.state.next_line();
+                        self.chomp();
+                        break;
+                    }
+                    Some(_) => break,
+                }
+            }
+
+            Ok(())
+        }
+
+        fn parse_number<T: FromStr>(&mut self) -> Result<T, RDNSError> {
             let mut str = String::new();
-            while let Some(&ch) = line.peek() {
-                if ch.is_digit(10) {
-                    str.push(line.next().unwrap());
+            while let Some(&ch) = self.state.peek_char() {
+                if ch.is_ascii_digit() {
+                    str.push(self.state.next_char().unwrap() as char);
                 } else {
                     break;
                 }
             }
 
+            println!("parse number {}", str);
+
             str.parse::<T>()
                 .map_err(|_| RDNSError::MasterFileFormatError("Invalid number".to_string()))
         }
 
-        fn get_text(&self, line: &mut Peekable<Chars>) -> Result<String, RDNSError> {
+        fn get_text(&mut self) -> Result<String, RDNSError> {
             let mut str = String::new();
-            while let Some(&ch) = line.peek() {
+            while let Some(&ch) = self.state.peek_char() {
                 if self.is_character(ch) {
-                    str.push(line.next().unwrap());
+                    str.push(self.state.next_char().unwrap() as char);
                 } else {
                     break;
                 }
@@ -379,25 +454,28 @@ mod parser {
             Ok(str)
         }
 
-        fn chomp(&self, line: &mut Peekable<Chars>) -> bool {
+        fn chomp(&mut self) -> bool {
             let mut any_taken = false;
-            while let Some(' ' | '\t') = line.peek() {
-                line.next();
+            while let Some(b' ' | b'\t') = self.state.peek_char() {
+                self.state.next_char();
                 any_taken = true;
             }
 
             any_taken
         }
 
-        fn is_character(&self, ch: char) -> bool {
+        fn is_character(&self, ch: u8) -> bool {
             match ch {
-                'a'..='z' | 'A'..='Z' => true,
+                b'a'..=b'z' | b'A'..=b'Z' => true,
                 _ => false,
             }
         }
 
-        fn is_whitespace(&self, ch: char) -> bool {
-            ch == ' ' || ch == '\t'
+        fn is_whitespace(&self, ch: u8) -> bool {
+            match ch {
+                b' ' | b'\t' => true,
+                _ => false,
+            }
         }
     }
 }
@@ -406,7 +484,6 @@ mod parser {
 mod tests {
     use crate::txt_config::parser;
     use core::record::ResourceData;
-    use std::borrow::Borrow;
     use std::collections::HashSet;
     use std::io::{BufRead, Cursor, Lines};
 
@@ -465,9 +542,16 @@ mod tests {
         assert_eq!(core::RRClass::IN, first_record.class);
         assert_eq!(300, first_record.ttl);
         assert_eq!(
-            core::name::Name::parse(&mut "example.com".chars().peekable(), HashSet::new())
-                .unwrap()
-                .raw(),
+            core::name::Name::parse(
+                &mut "example.com"
+                    .to_string()
+                    .into_bytes()
+                    .into_iter()
+                    .peekable(),
+                HashSet::new()
+            )
+            .unwrap()
+            .raw(),
             first_record.rdata.serialise()
         );
     }
@@ -512,9 +596,16 @@ mod tests {
         assert_eq!(core::RRClass::IN, first_record.class);
         assert_eq!(300, first_record.ttl);
         assert_eq!(
-            core::name::Name::parse(&mut "example.com".chars().peekable(), HashSet::new())
-                .unwrap()
-                .raw(),
+            core::name::Name::parse(
+                &mut "example.com"
+                    .to_string()
+                    .into_bytes()
+                    .into_iter()
+                    .peekable(),
+                HashSet::new()
+            )
+            .unwrap()
+            .raw(),
             first_record.rdata.serialise()
         );
     }
@@ -540,12 +631,63 @@ mod tests {
         assert_eq!(
             core::record::SOAResourceData {
                 primary_name: core::name::Name::parse(
-                    &mut "nameserver1".chars().peekable(),
+                    &mut "nameserver1"
+                        .to_string()
+                        .into_bytes()
+                        .into_iter()
+                        .peekable(),
                     HashSet::new()
                 )
                 .unwrap(),
                 responsible_name: core::name::Name::parse(
-                    &mut "owner".chars().peekable(),
+                    &mut "owner".to_string().into_bytes().into_iter().peekable(),
+                    HashSet::new()
+                )
+                .unwrap(),
+                serial: 20,
+                refresh: 7200,
+                retry: 600,
+                expire: 3600000,
+                minimum: 60,
+            }
+            .serialise(),
+            first_record.rdata.serialise()
+        );
+    }
+
+    #[test]
+    fn parse_soa_rr_on_multiple_lines() {
+        let records = parser::TxtConfigParser::parse(
+            &mut as_lines(
+                "@ IN SOA nameserver1 owner (20\n 7200\n 600\n 3600000\n 60)".to_string(),
+            ),
+            core::name::Name::root(),
+        )
+        .unwrap();
+
+        assert_eq!(1, records.len());
+
+        let first_record = records.get(0).unwrap().clone();
+        assert_eq!(
+            ".",
+            <core::name::Name as Into<String>>::into(first_record.name.clone())
+        );
+        assert_eq!(core::RRType::SOA, first_record.rr_type);
+        assert_eq!(core::RRClass::IN, first_record.class);
+        assert_eq!(0, first_record.ttl);
+        assert_eq!(
+            core::record::SOAResourceData {
+                primary_name: core::name::Name::parse(
+                    &mut "nameserver1"
+                        .to_string()
+                        .into_bytes()
+                        .into_iter()
+                        .peekable(),
+                    HashSet::new()
+                )
+                .unwrap(),
+                responsible_name: core::name::Name::parse(
+                    &mut "owner".to_string().into_bytes().into_iter().peekable(),
                     HashSet::new()
                 )
                 .unwrap(),

@@ -2,7 +2,7 @@ use crate::error::RDNSError;
 use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
 use std::iter::Peekable;
-use std::str::Chars;
+use std::vec::IntoIter;
 
 #[derive(Debug, Clone)]
 pub struct Name(Vec<u8>);
@@ -12,7 +12,10 @@ impl Name {
         Name(vec![0])
     }
 
-    pub fn parse(repr: &mut Peekable<Chars>, stop_chars: HashSet<char>) -> Result<Name, RDNSError> {
+    pub fn parse(
+        repr: &mut Peekable<IntoIter<u8>>,
+        stop_chars: HashSet<u8>,
+    ) -> Result<Name, RDNSError> {
         let result = parser::NameParser::parse(repr, stop_chars)?;
         Ok(Name(result))
     }
@@ -31,10 +34,10 @@ impl Name {
     }
 }
 
-impl<'a> TryFrom<&'a str> for Name {
+impl<'a> TryFrom<String> for Name {
     type Error = RDNSError;
 
-    fn try_from(repr: &str) -> Result<Self, Self::Error> {
+    fn try_from(repr: String) -> Result<Self, Self::Error> {
         parser::NameParser::parse_repr(repr).map(|v| Name(v))
     }
 }
@@ -76,17 +79,17 @@ pub mod parser {
     use crate::error::RDNSError;
     use std::collections::HashSet;
     use std::iter::Peekable;
-    use std::str::Chars;
+    use std::vec::IntoIter;
 
-    pub struct NameParser<'a, 'b> {
-        repr: &'a mut Peekable<Chars<'b>>,
+    pub struct NameParser<'a> {
+        repr: &'a mut Peekable<IntoIter<u8>>,
         pos: u8,
         label_pos: u8,
         result: Vec<u8>,
     }
 
-    impl<'a, 'b> NameParser<'_, '_> {
-        fn new(repr: &'a mut Peekable<Chars<'b>>) -> Result<NameParser<'a, 'b>, RDNSError> {
+    impl<'a> NameParser<'_> {
+        fn new(repr: &'a mut Peekable<IntoIter<u8>>) -> Result<NameParser<'a>, RDNSError> {
             Ok(NameParser {
                 repr,
                 pos: 0,
@@ -95,22 +98,25 @@ pub mod parser {
             })
         }
 
-        pub fn parse_repr(repr: &'a str) -> Result<Vec<u8>, RDNSError> {
+        pub fn parse_repr(repr: String) -> Result<Vec<u8>, RDNSError> {
             if repr.len() > 255 {
                 return Err(RDNSError::NameTooLong(repr.len()));
             }
 
-            NameParser::parse(&mut repr.chars().peekable(), HashSet::new())
+            NameParser::parse(
+                &mut repr.into_bytes().into_iter().peekable(),
+                HashSet::new(),
+            )
         }
 
         pub fn parse(
-            repr: &'a mut Peekable<Chars>,
-            stop_chars: HashSet<char>,
+            repr: &mut Peekable<IntoIter<u8>>,
+            stop_chars: HashSet<u8>,
         ) -> Result<Vec<u8>, RDNSError> {
             let mut parser = NameParser::new(repr)?;
 
             match parser.repr.peek() {
-                Some('.') => {
+                Some(b'.') => {
                     parser.result.push(0);
                 }
                 Some(_) => parser.parse_subdomain(stop_chars)?,
@@ -124,11 +130,11 @@ pub mod parser {
             Ok(parser.result)
         }
 
-        fn parse_subdomain(&mut self, stop_chars: HashSet<char>) -> Result<(), RDNSError> {
+        fn parse_subdomain(&mut self, stop_chars: HashSet<u8>) -> Result<(), RDNSError> {
             self.parse_label()?;
 
             match self.repr.peek() {
-                Some('.') => {
+                Some(b'.') => {
                     self.pos += 1;
                     self.repr.next();
 
@@ -214,18 +220,24 @@ pub mod parser {
         }
 
         #[inline]
-        fn is_letter(ch: char) -> bool {
-            (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+        fn is_letter(ch: u8) -> bool {
+            match ch {
+                b'a'..=b'z' | b'A'..=b'Z' => true,
+                _ => false,
+            }
         }
 
         #[inline]
-        fn is_digit(ch: char) -> bool {
-            ch >= '0' && ch <= '9'
+        fn is_digit(ch: u8) -> bool {
+            match ch {
+                b'0'..=b'9' => true,
+                _ => false,
+            }
         }
 
         #[inline]
-        fn is_hyphen(ch: char) -> bool {
-            ch == '-'
+        fn is_hyphen(ch: u8) -> bool {
+            ch == b'-'
         }
     }
 }
@@ -239,14 +251,14 @@ mod tests {
 
     #[test]
     fn root_name() {
-        let name = Name::try_from(".").unwrap();
+        let name = Name::try_from(".".to_string()).unwrap();
         assert_eq!(vec![0; 1], name.0);
     }
 
     #[test]
     fn example_dot_com_relative() {
-        let test_name = "example.com";
-        let name = Name::try_from(test_name).unwrap();
+        let test_name = "example.com".to_string();
+        let name = Name::try_from(test_name.clone()).unwrap();
 
         let expected = test::dirty_to_bytes(test_name);
         assert_eq!(expected, name.0);
@@ -254,8 +266,8 @@ mod tests {
 
     #[test]
     fn example_dot_com_absolute() {
-        let test_name = "example.com.";
-        let name = Name::try_from(test_name).unwrap();
+        let test_name = "example.com.".to_string();
+        let name = Name::try_from(test_name.clone()).unwrap();
 
         let expected = test::dirty_to_bytes(test_name);
         assert_eq!(expected, name.0);
@@ -263,8 +275,8 @@ mod tests {
 
     #[test]
     fn four_part_name() {
-        let test_name = "a.b.example.com";
-        let name = Name::try_from(test_name).unwrap();
+        let test_name = "a.b.example.com".to_string();
+        let name = Name::try_from(test_name.clone()).unwrap();
 
         let expected = test::dirty_to_bytes(test_name);
         assert_eq!(expected, name.0);
@@ -272,8 +284,8 @@ mod tests {
 
     #[test]
     fn hyphen_inside_label() {
-        let test_name = "a-b.example.com";
-        let name = Name::try_from(test_name).unwrap();
+        let test_name = "a-b.example.com".to_string();
+        let name = Name::try_from(test_name.clone()).unwrap();
 
         let expected = test::dirty_to_bytes(test_name);
         assert_eq!(expected, name.0);
@@ -281,7 +293,7 @@ mod tests {
 
     #[test]
     fn label_must_not_start_with_hyphen() {
-        let test_name = "-a.example.com";
+        let test_name = "-a.example.com".to_string();
         let name = Name::try_from(test_name).unwrap_err();
 
         assert!(matches!(name, RDNSError::NameLabelInvalid(0)));
@@ -289,7 +301,7 @@ mod tests {
 
     #[test]
     fn label_must_not_end_with_hyphen() {
-        let test_name = "a-.example.com";
+        let test_name = "a-.example.com".to_string();
         let name = Name::try_from(test_name).unwrap_err();
 
         assert!(matches!(name, RDNSError::NameLabelInvalid(1)));
@@ -297,7 +309,7 @@ mod tests {
 
     #[test]
     fn label_must_not_contain_invalid_characters() {
-        let test_name = "a.ex@mple.com";
+        let test_name = "a.ex@mple.com".to_string();
         let name = Name::try_from(test_name).unwrap_err();
 
         assert!(matches!(name, RDNSError::NameLabelInvalid(4)));
@@ -305,7 +317,7 @@ mod tests {
 
     #[test]
     fn empty_string_not_a_valid_name() {
-        let test_name = "";
+        let test_name = String::new();
         let name = Name::try_from(test_name).unwrap_err();
 
         assert!(matches!(name, RDNSError::NameInvalid()));
@@ -320,7 +332,7 @@ mod tests {
             name.push('.' as u8)
         }
         let test_name = String::from_utf8(name).unwrap();
-        let name = Name::try_from(test_name.as_str()).unwrap_err();
+        let name = Name::try_from(test_name).unwrap_err();
 
         assert!(matches!(name, RDNSError::NameTooLong(320)));
     }
@@ -330,7 +342,7 @@ mod tests {
         let mut name = vec!['a' as u8; 65];
         name.extend_from_slice(".com".as_bytes());
         let test_name = String::from_utf8(name).unwrap();
-        let name = Name::try_from(test_name.as_str()).unwrap_err();
+        let name = Name::try_from(test_name).unwrap_err();
 
         assert!(matches!(name, RDNSError::NameLabelTooLong(65)));
     }
@@ -340,33 +352,36 @@ mod tests {
         let mut name = vec!['a' as u8; 260];
         name.extend_from_slice(".com".as_bytes());
         let test_name = String::from_utf8(name).unwrap();
-        let name = Name::try_from(test_name.as_str()).unwrap_err();
+        let name = Name::try_from(test_name).unwrap_err();
 
         assert!(matches!(name, RDNSError::NameTooLong(264)));
     }
 
     #[test]
     fn round_trip_example_dot_com_relative() {
-        let test_name = "example.com";
-        let name = Name::try_from(test_name).unwrap();
+        let test_name = "example.com".to_string();
+        let name = Name::try_from(test_name.clone()).unwrap();
 
         assert_eq!(test_name, <Name as Into<String>>::into(name));
     }
 
     #[test]
     fn round_trip_example_dot_com_absolute() {
-        let test_name = "example.com.";
-        let name = Name::try_from(test_name).unwrap();
+        let test_name = "example.com.".to_string();
+        let name = Name::try_from(test_name.clone()).unwrap();
 
         assert_eq!(test_name, <Name as Into<String>>::into(name));
     }
 
     #[test]
     fn parse_with_stop_pattern_for_example_dot_com_absolute() {
-        let test_name = "example.com. ";
+        let test_name = "example.com. ".to_string();
         let name = Name(
-            parser::NameParser::parse(&mut test_name.chars().peekable(), HashSet::from([' ']))
-                .unwrap(),
+            parser::NameParser::parse(
+                &mut test_name.clone().into_bytes().into_iter().peekable(),
+                HashSet::from([b' ']),
+            )
+            .unwrap(),
         );
 
         assert_eq!(
@@ -377,10 +392,13 @@ mod tests {
 
     #[test]
     fn parse_with_stop_pattern_for_example_dot_com_relative() {
-        let test_name = "example.com ";
+        let test_name = "example.com ".to_string();
         let name = Name(
-            parser::NameParser::parse(&mut test_name.chars().peekable(), HashSet::from([' ']))
-                .unwrap(),
+            parser::NameParser::parse(
+                &mut test_name.clone().into_bytes().into_iter().peekable(),
+                HashSet::from([b' ']),
+            )
+            .unwrap(),
         );
 
         assert_eq!(
@@ -391,11 +409,11 @@ mod tests {
 
     #[test]
     fn parse_with_multi_stop_pattern() {
-        let test_name = "example.com\t";
+        let test_name = "example.com\t".to_string();
         let name = Name(
             parser::NameParser::parse(
-                &mut test_name.chars().peekable(),
-                HashSet::from([' ', '\t']),
+                &mut test_name.clone().into_bytes().into_iter().peekable(),
+                HashSet::from([b' ', b'\t']),
             )
             .unwrap(),
         );

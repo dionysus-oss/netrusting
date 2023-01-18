@@ -45,7 +45,7 @@ pub struct CNameResourceData(pub Name);
 impl CNameResourceData {
     fn read(source: &[u8]) -> Result<Self, RDNSError> {
         let name_str = String::from_utf8(source.to_owned())?;
-        let name = Name::try_from(name_str.as_ref())?;
+        let name = Name::try_from(name_str)?;
         Ok(CNameResourceData(name))
     }
 }
@@ -117,7 +117,7 @@ impl MailExchangeResourceData {
     fn read(priority: u16, exchange: &[u8]) -> Result<Self, RDNSError> {
         Ok(MailExchangeResourceData {
             preference: priority,
-            exchange: Name::try_from(String::from_utf8(exchange.to_owned())?.as_str())?,
+            exchange: Name::try_from(String::from_utf8(exchange.to_owned())?)?,
         })
     }
 }
@@ -152,7 +152,7 @@ mod tests {
     fn round_trip_cname() {
         let input = "example.com";
         let cname = CNameResourceData::read(input.as_bytes()).unwrap();
-        assert_eq!(test::dirty_to_bytes(input), cname.serialise());
+        assert_eq!(test::dirty_to_bytes(input.to_string()), cname.serialise());
     }
 
     #[test]
@@ -170,7 +170,7 @@ mod tests {
         let mut expected = Vec::new();
         expected.push(0u8);
         expected.push(10);
-        expected.extend(test::dirty_to_bytes(input));
+        expected.extend(test::dirty_to_bytes(input.to_string()));
         assert_eq!(expected, mx.serialise());
     }
 }

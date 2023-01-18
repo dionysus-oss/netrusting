@@ -1,5 +1,5 @@
 #[cfg(test)]
-pub fn dirty_to_bytes(repr: &str) -> Vec<u8> {
+pub fn dirty_to_bytes(repr: String) -> Vec<u8> {
     let mut result = Vec::with_capacity(repr.len());
 
     let labels = repr.split('.');
