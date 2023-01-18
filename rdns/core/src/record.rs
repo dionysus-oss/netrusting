@@ -40,6 +40,23 @@ impl ResourceData for AliasResourceData {
 }
 
 #[derive(Debug)]
+pub struct NameServerResourceData(pub Name);
+
+impl NameServerResourceData {
+    fn read(source: &[u8]) -> Result<Self, RDNSError> {
+        let name_str = String::from_utf8(source.to_owned())?;
+        let name = Name::try_from(name_str)?;
+        Ok(NameServerResourceData(name))
+    }
+}
+
+impl ResourceData for NameServerResourceData {
+    fn serialise(&self) -> Vec<u8> {
+        self.0.clone().into()
+    }
+}
+
+#[derive(Debug)]
 pub struct CNameResourceData(pub Name);
 
 impl CNameResourceData {

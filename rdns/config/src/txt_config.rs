@@ -242,7 +242,10 @@ mod parser {
                     let ip_address = self.parse_ip_addr()?;
                     Rc::new(core::record::AliasResourceData(ip_address))
                 }
-                //Some(core::RRType::NS) => {}
+                Some(core::RRType::NS) => {
+                    let name = self.parse_domain_name()?;
+                    Rc::new(core::record::NameServerResourceData(name))
+                }
                 Some(core::RRType::CNAME) => {
                     let name = self.parse_domain_name()?;
                     Rc::new(core::record::CNameResourceData(name))
@@ -575,6 +578,35 @@ mod tests {
         assert_eq!(core::RRClass::IN, first_record.class);
         assert_eq!(300, first_record.ttl);
         assert_eq!(vec![1, 2, 3, 4], first_record.rdata.serialise());
+    }
+
+    #[test]
+    fn parse_name_server_rr() {
+        let records = parser::TxtConfigParser::parse(
+            &mut as_lines("exemplar.com. IN NS hosting".to_string()),
+            core::name::Name::root(),
+        )
+        .unwrap();
+
+        assert_eq!(1, records.len());
+
+        let first_record = records.get(0).unwrap().clone();
+        assert_eq!(
+            "exemplar.com.",
+            <core::name::Name as Into<String>>::into(first_record.name.clone())
+        );
+        assert_eq!(core::RRType::NS, first_record.rr_type);
+        assert_eq!(core::RRClass::IN, first_record.class);
+        assert_eq!(0, first_record.ttl);
+        assert_eq!(
+            core::name::Name::parse(
+                &mut "hosting".to_string().into_bytes().into_iter().peekable(),
+                HashSet::new()
+            )
+            .unwrap()
+            .raw(),
+            first_record.rdata.serialise()
+        );
     }
 
     #[test]
