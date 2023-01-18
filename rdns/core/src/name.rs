@@ -172,11 +172,58 @@ pub mod parser {
                 return Err(RDNSError::NameLabelInvalid(self.pos));
             }
 
-            while self.current_is_letter_digit_hyphen() {
-                self.pos += 1;
-                self.label_pos += 1;
-                prev = self.repr.next().unwrap();
-                self.result.push(prev as u8);
+            loop {
+                match self.repr.peek() {
+                    Some(b'\\') => {
+                        self.repr.next().unwrap();
+                        match self.repr.peek() {
+                            Some(b'0'..=b'9') => {
+                                let mut digits = String::new();
+                                digits.push(self.repr.next().unwrap() as char);
+
+                                let digit_two = self.repr.peek().cloned();
+                                let digit_three = self.repr.peek().to_owned().cloned();
+                                if let (Some(b'0'..=b'9'), Some(b'0'..=b'9')) =
+                                    (digit_two, digit_three)
+                                {
+                                    digits.push(self.repr.next().unwrap() as char);
+                                    digits.push(self.repr.next().unwrap() as char);
+                                } else {
+                                    return Err(RDNSError::NameLabelInvalid(self.pos + 1));
+                                }
+
+                                // TODO should \000 be blocked here?
+                                self.pos += 1;
+                                self.label_pos += 1;
+                                let prev = match digits.parse::<u8>() {
+                                    Ok(ch) => ch,
+                                    Err(_) => return Err(RDNSError::NameLabelInvalid(self.pos)),
+                                };
+                                self.result.push(prev);
+                            }
+                            Some(_) => {
+                                self.pos += 1;
+                                self.label_pos += 1;
+                                prev = self.repr.next().unwrap();
+                                self.result.push(prev);
+                            }
+                            None => {
+                                return Err(RDNSError::NameLabelInvalid(self.pos + 1));
+                            }
+                        }
+                    }
+                    Some(_) => {
+                        if self.current_is_letter_digit_hyphen() {
+                            self.pos += 1;
+                            self.label_pos += 1;
+                            prev = self.repr.next().unwrap();
+                            self.result.push(prev as u8);
+                        } else {
+                            break;
+                        }
+                    }
+                    None => break,
+                }
             }
 
             if NameParser::is_hyphen(prev) {
@@ -420,6 +467,40 @@ mod tests {
 
         assert_eq!(
             test_name.trim_end().to_string(),
+            <Name as Into<String>>::into(name)
+        );
+    }
+
+    #[test]
+    fn insert_letter_a_using_escape_sequence() {
+        let test_name = "ex\\097mple.com".to_string();
+        let name = Name(
+            parser::NameParser::parse(
+                &mut test_name.clone().into_bytes().into_iter().peekable(),
+                HashSet::new(),
+            )
+            .unwrap(),
+        );
+
+        assert_eq!(
+            "example.com".to_string(),
+            <Name as Into<String>>::into(name)
+        );
+    }
+
+    #[test]
+    fn insert_dot_in_label_using_escape_sequence() {
+        let test_name = "ex\\.mple.com".to_string();
+        let name = Name(
+            parser::NameParser::parse(
+                &mut test_name.clone().into_bytes().into_iter().peekable(),
+                HashSet::new(),
+            )
+            .unwrap(),
+        );
+
+        assert_eq!(
+            "ex.mple.com".to_string(),
             <Name as Into<String>>::into(name)
         );
     }
