@@ -209,11 +209,7 @@ mod parser {
             self.current_name = Some(self.parse_domain_name()?);
 
             self.chomp();
-            let rr = self.parse_rr();
-
-            self.current_name = None;
-
-            rr
+            self.parse_rr()
         }
 
         fn parse_rr(&mut self) -> Result<rdns_core::ResourceRecord, RDNSError> {
@@ -221,7 +217,7 @@ mod parser {
             self.chomp();
 
             let text = self.get_text()?;
-            let class: rdns_core::RRClass<u16> = text.as_str().try_into().unwrap();
+            let mut class: rdns_core::RRClass<u16> = text.as_str().try_into().unwrap();
             self.chomp();
 
             let mut rr_type: Option<rdns_core::RRType<u16>> =
@@ -244,13 +240,19 @@ mod parser {
             }
 
             if class == rdns_core::RRClass::UNKNOWN(0) {
-                return Err(RDNSError::MasterFileFormatError(
-                    "No class".to_string(),
-                    self.state.current_position(),
-                ));
+                if self.current_class != rdns_core::RRClass::UNKNOWN(0) {
+                    class = self.current_class.clone();
+                } else {
+                    return Err(RDNSError::MasterFileFormatError(
+                        "No class".to_string(),
+                        self.state.current_position(),
+                    ));
+                }
             } else if self.current_class == rdns_core::RRClass::UNKNOWN(0) {
                 self.current_class = class.clone();
-            } else if self.current_class == class {
+            }
+
+            if class != self.current_class {
                 // TODO propagate to included files?
                 return Err(RDNSError::MasterFileFormatError(
                     "File must only contain one class".to_string(),
@@ -272,9 +274,15 @@ mod parser {
                     Rc::new(rdns_core::record::CNameResourceData(name))
                 }
                 Some(rdns_core::RRType::SOA) => Rc::new(self.parse_soa()?),
-                _ => {
+                Some(rr_type) => {
                     return Err(RDNSError::MasterFileFormatError(
-                        "unknown resource record type".to_string(),
+                        format!("unknown resource record type '{:?}'", rr_type),
+                        self.state.current_position(),
+                    ));
+                }
+                None => {
+                    return Err(RDNSError::MasterFileFormatError(
+                        format!("missing resource record type"),
                         self.state.current_position(),
                     ));
                 }
