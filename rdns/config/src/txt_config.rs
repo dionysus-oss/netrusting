@@ -274,6 +274,16 @@ mod parser {
                     Rc::new(rdns_core::record::CNameResourceData(name))
                 }
                 Some(rdns_core::RRType::SOA) => Rc::new(self.parse_soa()?),
+                Some(rdns_core::RRType::MX) => {
+                    let preference = self.parse_number::<u16>()?;
+                    self.chomp();
+                    let exchange = self.parse_domain_name()?;
+
+                    Rc::new(rdns_core::record::MailExchangeResourceData {
+                        preference,
+                        exchange,
+                    })
+                }
                 Some(rr_type) => {
                     return Err(RDNSError::MasterFileFormatError(
                         format!("unknown resource record type '{:?}'", rr_type),
@@ -483,8 +493,6 @@ mod parser {
                     break;
                 }
             }
-
-            println!("parse number {}", str);
 
             str.parse::<T>().map_err(|_| {
                 RDNSError::MasterFileFormatError(

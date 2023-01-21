@@ -125,9 +125,9 @@ impl ResourceData for HInfoResourceData {
 }
 
 #[derive(Debug)]
-struct MailExchangeResourceData {
-    preference: u16,
-    exchange: Name,
+pub struct MailExchangeResourceData {
+    pub preference: u16,
+    pub exchange: Name,
 }
 
 impl MailExchangeResourceData {
