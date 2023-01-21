@@ -125,6 +125,23 @@ impl ResourceData for HInfoResourceData {
 }
 
 #[derive(Debug)]
+pub struct PointerResourceData(pub Name);
+
+impl PointerResourceData {
+    fn read(source: &[u8]) -> Result<Self, RDNSError> {
+        let name_str = String::from_utf8(source.to_owned())?;
+        let name = Name::try_from(name_str)?;
+        Ok(PointerResourceData(name))
+    }
+}
+
+impl ResourceData for PointerResourceData {
+    fn serialise(&self) -> Vec<u8> {
+        self.0.clone().into()
+    }
+}
+
+#[derive(Debug)]
 pub struct MailExchangeResourceData {
     pub preference: u16,
     pub exchange: Name,

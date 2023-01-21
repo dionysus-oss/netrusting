@@ -1,5 +1,4 @@
 use rdns_core::error::{LineCharPos, RDNSError};
-use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, Lines, Read};
@@ -274,6 +273,10 @@ mod parser {
                     Rc::new(rdns_core::record::CNameResourceData(name))
                 }
                 Some(rdns_core::RRType::SOA) => Rc::new(self.parse_soa()?),
+                Some(rdns_core::RRType::PTR) => {
+                    let name = self.parse_domain_name()?;
+                    Rc::new(rdns_core::record::PointerResourceData(name))
+                }
                 Some(rdns_core::RRType::MX) => {
                     let preference = self.parse_number::<u16>()?;
                     self.chomp();
@@ -349,7 +352,7 @@ mod parser {
                         return Err(RDNSError::MasterFileFormatError(
                             e.to_string(),
                             self.state.current_position(),
-                        ))
+                        ));
                     }
                 }
             };
